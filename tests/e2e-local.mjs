@@ -35,6 +35,13 @@ await page.waitForFunction(() => /Nenhum lançamento ainda/.test(document.queryS
 check((await page.title()) === 'Controle de Finanças', 'título da página');
 check((await page.locator('meta[name=viewport]').count()) === 1, 'meta viewport presente (sem ela o celular mostra a versão desktop encolhida)');
 check(await noOverflow(page), 'sem rolagem horizontal na tela vazia');
+const fits = () => page.evaluate(() => ({ scroll: document.documentElement.scrollHeight - innerHeight, tabsBottom: Math.round(document.querySelector('.tabs').getBoundingClientRect().bottom), innerH: innerHeight }));
+for (const tb of ['resumo', 'confirmar', 'gastos', 'importar', 'ajustes']) {
+  await tab(page, tb);
+  const f = await fits();
+  check(f.scroll <= 0 && f.tabsBottom <= f.innerH, `aba ${tb}: a página cabe na tela (sem rolagem da página, barra de abas dentro da tela)`, f);
+}
+await tab(page, 'resumo');
 check(/Nenhum lançamento ainda/.test(await page.locator('#v-resumo').innerText()), 'estado vazio no primeiro acesso');
 await shot(page, '01-vazio-claro');
 
@@ -252,6 +259,22 @@ await page.fill('#ncN', 'Categoria de teste');
 await page.locator('#ncA').click();
 check(await page.locator('.chip', { hasText: 'Categoria de teste' }).count() === 1, 'nova categoria aparece');
 check(/Dados só neste navegador/.test(await page.locator('#v-ajustes').innerText()), 'aviso claro de que no modo local os dados ficam só no navegador');
+
+section('9b. Selo flutuante do hospedeiro (Netlify) não cobre as abas');
+{
+  const tabsHit = (pg) => pg.evaluate(() => [...document.querySelectorAll('.tab')].map((el) => { const r = el.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return !!hit && !!hit.closest('.tab') && hit.closest('.tab') === el; }));
+  check((await tabsHit(page)).every(Boolean), 'sem selo: as 5 abas recebem o toque');
+  await page.evaluate(() => { const f = document.createElement('iframe'); f.id = 'nl-badge-frame'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:201px;height:64px;border:0;z-index:2147483647;background:#123'; document.body.appendChild(f); });
+  await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--badge-h') === '64px');
+  const hits = await tabsHit(page);
+  check(hits.length === 5 && hits.every(Boolean), 'com o selo de 201x64 no canto, as 5 abas continuam recebendo o toque', hits);
+  const geo = await page.evaluate(() => ({ tabsBottom: Math.round(document.querySelector('.tabs').getBoundingClientRect().bottom), badgeTop: Math.round(document.getElementById('nl-badge-frame').getBoundingClientRect().top) }));
+  check(geo.tabsBottom <= geo.badgeTop, 'a barra de abas inteira termina acima do selo', geo);
+  await shot(page, '14-com-selo-hospedeiro');
+  await page.evaluate(() => document.getElementById('nl-badge-frame').remove());
+  await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--badge-h') === '0px');
+  check((await tabsHit(page)).every(Boolean), 'sem o selo, o espaço extra some');
+}
 
 section('10. Sem erros no console');
 check(errors.length === 0, 'nenhum erro de JavaScript nem de console', errors);

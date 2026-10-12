@@ -5,6 +5,7 @@
   "scripts": {
     "serve": "npx http-server . -p 5173 -c-1",
     "test": "node tests/e2e-local.mjs",
+    "smoke": "node tests/smoke-deployed.mjs",
     "test:cloud": "npx firebase-tools@13.29.1 emulators:exec --only auth,firestore --project demo-finance \"node tests/e2e-cloud.mjs\""
   },
   "devDependencies": {

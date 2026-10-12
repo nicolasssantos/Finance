@@ -1,0 +1,21 @@
+# Publicação estática: não há build, os arquivos já são o app.
+[build]
+  publish = "."
+
+# O service worker nunca fica em cache, para o celular pegar versões novas do app.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+# Tipo correto do manifesto, necessário para instalar o app na tela inicial.
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"

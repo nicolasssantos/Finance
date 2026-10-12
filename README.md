@@ -34,6 +34,14 @@ Cada usuário só lê e grava a própria área (`users/{uid}/...`), garantido po
 
 Cotas gratuitas do plano Spark (50 mil leituras e 20 mil gravações por dia no Firestore) são folgadas para este uso: cada abertura lê os lançamentos dos últimos 3 anos, cerca de mil por ano.
 
+## Publicação
+
+O app está publicado no Netlify, em <https://casa-fazenda-saude-financeira.netlify.app> (só os arquivos do app; testes e documentação não vão para o ar).
+
+- **Atualizar:** peça ao Claude para republicar, ou conecte este repositório ao Netlify (Project configuration > Build & deploy > Link repository) para publicar a cada push.
+- **Conferir o que está no ar:** `npm run smoke -- https://casa-fazenda-saude-financeira.netlify.app` abre o site num navegador, tenta um login com senha errada e confere a mensagem e os erros de console.
+- **Selo do Netlify:** o Netlify injeta um selo flutuante no canto inferior direito. O app reserva espaço para ele não cobrir as abas (hospedagem sem selo, como o Firebase Hosting, não muda nada).
+
 ## Uso mensal
 
 1. **Importar**: escolha o extrato do cartão (`.xlsx`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
