@@ -45,6 +45,7 @@ O app está publicado no Netlify, em <https://casa-fazenda-saude-financeira.netl
 ## Uso mensal
 
 1. **Importar**: escolha o extrato do cartão (`.xlsx` ou `.xls`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
+   - **Mês do extrato:** ao escolher o arquivo, o app pergunta **"Para qual mês é este extrato?"**. Ele sugere o mês pela última compra do arquivo e oferece o mês anterior e o seguinte (ou qualquer outro, ou "usar o mês de cada compra"). O botão de importar só libera depois da sua resposta. O mês escolhido define para onde os lançamentos vão; o ano das datas vem do próprio arquivo.
    - **Fatura do Bradesco** (`.xls` do Internet Banking, com os 3 cartões no mesmo arquivo): o app lê uma seção por cartão, usa a coluna em R$, ignora o saldo anterior e o pagamento da fatura anterior, mantém estornos como crédito e dá o ano certo às parcelas antigas (o banco imprime só dia/mês). A prévia mostra se a soma lida confere com o "Total da fatura" do arquivo.
    - **Ordem:** pode importar a planilha e o extrato em qualquer ordem. O gasto que já existe não é duplicado: o extrato preenche o cartão, e a planilha preenche a classificação que você já fez. O mais prático é importar a planilha primeiro, para o app já conhecer os seus lugares.
 2. **Confirmar**: o que o app não tem certeza aparece aqui. Laranja = sugestão para confirmar, amarelo = lugar novo. Depois de 2 confirmações iguais ele passa a classificar sozinho.

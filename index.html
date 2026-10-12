@@ -746,12 +746,8 @@ function resolveDM(d,m,ref){
   var ry=+r.slice(0,4),rm=+r.slice(5,7),rd=+r.slice(8,10);
   return ((m>rm||(m===rm&&d>rd))?ry-1:ry)+'-'+pad(m)+'-'+pad(d);
 }
-/* referência das datas sem ano: a da fatura (ou o último dia do mês escolhido em "Mês da fatura") */
-function refOf(I){
-  if(!I.refDate)return null;
-  if(I.refDate.slice(0,7)===I.fatYm)return I.refDate;
-  var p=I.fatYm.split('-');return I.fatYm+'-'+pad(new Date(+p[0],+p[1],0).getDate());
-}
+/* referência das datas sem ano: a da própria fatura */
+function refOf(I){return I.refDate||null}  /* o mês escolhido define para onde os lançamentos vão; o ano das datas vem do arquivo */
 function respNorm(v){
   var n=norm(v);if(!n)return '';
   for(var i=0;i<RESP.length;i++)if(norm(RESP[i])===n)return RESP[i];
@@ -842,6 +838,7 @@ function readSheet(){
   }
   var dts=I.data.map(function(r){return cols.date>=0?parseDate(r[cols.date],I.refDate):null}).filter(Boolean).sort();
   I.fatYm=dts.length?dts[dts.length-1].slice(0,7):ymNow();
+  I.fatSug=I.fatYm;if(I.monthOk==null)I.monthOk=false;
   /* total impresso no arquivo, para conferir a soma lida */
   I.fileTotal=null;
   rows.forEach(function(r){
@@ -891,27 +888,44 @@ function renderImport(){
   buildPreview();
   var pv=I.preview,c=I.cols,opts=function(sel,none){return '<option value="-1">'+none+'</option>'+I.headers.map(function(h,i){return '<option value="'+i+'"'+(sel===i?' selected':'')+'>'+esc(h)+'</option>'}).join('')};
   var hopt=function(v){return '<option value="">Escolha…</option>'+['Nicolas','Ana Paula','Fazenda'].map(function(x){return '<option'+(v===x?' selected':'')+'>'+x+'</option>'}).join('')};
-  var h='<div class="card"><h3>Extrato do cartão · colunas</h3><div class="grid2">';
+  var h=monthCard(I)+'<div class="card"><h3>Extrato do cartão · colunas</h3><div class="grid2">';
   if(I.wb.SheetNames.length>1)h+='<label class="f">Planilha<select id="iSheet">'+I.wb.SheetNames.map(function(n){return '<option'+(n===I.sheet?' selected':'')+'>'+esc(n)+'</option>'}).join('')+'</select></label>';
   h+='<label class="f">Data<select data-c="date">'+opts(c.date,'—')+'</select></label><label class="f">Lugar<select data-c="desc">'+opts(c.desc,'—')+'</select></label><label class="f">Valor<select data-c="amt">'+opts(c.amt,'—')+'</select></label><label class="f">Titular do cartão<select data-c="holder">'+opts(c.holder,'Sem coluna de titular')+'</select></label>';
   if(c.holder<0)h+='<label class="f">Este arquivo é do cartão de<select id="iFixed">'+hopt(I.fixed)+'</select></label>';
   h+='</div></div>';
   var hk=Object.keys(I.holderMap);
   if(c.holder>=0&&hk.length)h+='<div class="card"><h3>Titulares</h3><div class="rows">'+hk.map(function(k,i){return '<div class="hrow"><span style="overflow-wrap:anywhere">'+esc(k)+'</span><select data-h="'+i+'">'+hopt(I.holderMap[k])+'</select><span></span></div>'}).join('')+'</div><p class="hint" style="margin:10px 0 0">Fazenda: o app pergunta o responsável (Leite, Granja, Peixe…). Nicolas e Ana Paula: já entram com esse responsável.</p></div>';
-  h+='<div class="card"><h3>Competência</h3><div class="chips" style="margin-bottom:10px"><button class="chip'+(I.comp==='fatura'?' on':'')+'" data-comp="fatura">Mês da fatura</button><button class="chip'+(I.comp==='compra'?' on':'')+'" data-comp="compra">Mês da compra</button></div>';
-  if(I.comp==='fatura')h+='<label class="f">Todos os lançamentos entram em<input type="month" id="iFat" value="'+I.fatYm+'"></label>';
-  if(I.refDate)h+='<p class="hint" style="margin:10px 0 0">As datas do arquivo vêm sem ano. O app usou o ano mais recente até <b>'+I.refDate.slice(8,10)+'/'+I.refDate.slice(5,7)+'/'+I.refDate.slice(0,4)+'</b> (parcelas antigas ficam no ano anterior).</p>';
-  h+='<label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="iFlip" '+(I.flip?'checked':'')+' style="width:20px;height:20px"> Compras vêm com sinal negativo no arquivo</label></div>';
+  h+='<div class="card"><h3>Datas e valores</h3>';
+  if(I.refDate)h+='<p class="hint" style="margin:0 0 10px">As datas do arquivo vêm sem ano. O app usou o ano mais recente até <b>'+I.refDate.slice(8,10)+'/'+I.refDate.slice(5,7)+'/'+I.refDate.slice(0,4)+'</b> (parcelas antigas ficam no ano anterior).</p>';
+  h+='<label class="hint" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="iFlip" '+(I.flip?'checked':'')+' style="width:20px;height:20px"> Compras vêm com sinal negativo no arquivo</label></div>';
   h+=previewCard(pv,I);
   el.innerHTML=h;
   $$('[data-c]',el).forEach(function(s){s.onchange=function(){I.cols[s.dataset.c]=+s.value;if(s.dataset.c==='holder')refreshHolders();renderImport()}});
-  var sh=$('#iSheet');if(sh)sh.onchange=function(){I.sheet=sh.value;readSheet();renderImport()};
+  var sh=$('#iSheet');if(sh)sh.onchange=function(){I.sheet=sh.value;I.monthOk=false;readSheet();renderImport()};
   var fx=$('#iFixed');if(fx)fx.onchange=function(){I.fixed=fx.value;renderImport()};
   $$('[data-h]',el).forEach(function(s){s.onchange=function(){I.holderMap[hk[+s.dataset.h]]=s.value;renderImport()}});
-  $$('[data-comp]',el).forEach(function(b){b.onclick=function(){I.comp=b.dataset.comp;renderImport()}});
-  var ft=$('#iFat');if(ft)ft.onchange=function(){if(/^\d{4}-\d{2}$/.test(ft.value)){I.fatYm=ft.value;renderImport()}};
+  $$('[data-comp]',el).forEach(function(b){b.onclick=function(){I.comp=b.dataset.comp;if(I.comp==='fatura'){I.fatYm=I.fatSug;I.monthOk=false}renderImport()}});
+  $$('[data-fm]',el).forEach(function(b){b.onclick=function(){I.fatYm=b.dataset.fm;I.monthOk=true;renderImport()}});
+  var ft=$('#iFat');if(ft)ft.onchange=function(){
+    if(!/^\d{4}-\d{2}$/.test(ft.value))return;
+    if(ft.value<MIN_YM){toast('O app começa em janeiro de 2026');return}
+    I.fatYm=ft.value;I.monthOk=true;renderImport();
+  };
   $('#iFlip').onchange=function(e){I.flip=e.target.checked;renderImport()};
   $('#iGo').onclick=function(){runImport(I.preview)};
+}
+/* pergunta explícita: para qual mês é este extrato? (o botão de importar só libera depois da resposta) */
+function monthCard(I){
+  if(I.comp==='compra')return '<div class="card" id="mCard"><h3>Mês do extrato</h3><p class="hint" style="margin:0 0 10px">Cada lançamento entra no mês da própria compra.</p><button class="chip" data-comp="fatura">Escolher um mês para todos</button></div>';
+  var sug=I.fatSug||I.fatYm,opts=[ymAdd(sug,-1),sug,ymAdd(sug,1)].filter(function(m){return m>=MIN_YM});
+  var nome=function(m){return MESES_NOME[+m.slice(5)-1]+' '+m.slice(0,4)};
+  var h='<div class="card" id="mCard"'+(I.monthOk?'':' style="background:var(--maybe);border-color:var(--maybe-edge)"')+'><h3>Para qual mês é este extrato?</h3>';
+  h+='<p class="hint" style="margin:0 0 10px">Todos os lançamentos entram nesse mês. Sugestão pela última compra do arquivo: <b>'+nome(sug)+'</b>.</p>';
+  h+='<div class="chips" style="margin-bottom:10px">'+opts.map(function(m){return '<button class="chip'+(I.monthOk&&I.fatYm===m?' on':'')+'" data-fm="'+m+'"'+(m===sug?' data-sug="1"':'')+'>'+nome(m)+(m===sug?' · sugerido':'')+'</button>'}).join('')+'</div>';
+  h+='<label class="f">Outro mês<input type="month" id="iFat" min="'+MIN_YM+'" value="'+I.fatYm+'"></label>';
+  if(I.monthOk)h+='<p class="hint" style="margin:10px 0 0;color:var(--good)">✓ Importando para <b>'+nome(I.fatYm)+'</b>.</p>';
+  h+='<button class="chip" data-comp="compra" style="margin-top:10px">Usar o mês de cada compra</button></div>';
+  return h;
 }
 function previewCard(pv,I){
   var en=(I.enrich||[]).length;
@@ -922,8 +936,9 @@ function previewCard(pv,I){
     h+=Math.abs(dif)<0.005?'<p class="hint" style="margin:0 0 10px;color:var(--good)">✓ A soma lida ('+money(I.fileSum)+') confere com o total da fatura.</p>':'<div class="warn" style="margin:0 0 10px">A soma lida ('+money(I.fileSum)+') difere do total da fatura ('+money(I.fileTotal)+') em '+money(Math.abs(dif))+'. Confira os titulares e as colunas.</div>';
   }
   if(pv.length){h+='<div class="tbl"><table class="tight"><thead><tr><th>Data</th><th>Lugar</th><th class="r">Valor</th><th>Responsável</th></tr></thead><tbody>'+pv.slice(0,8).map(function(t){return '<tr style="background:'+(t.status==='new'?'var(--new)':t.status==='maybe'?'var(--maybe)':'transparent')+'"><td>'+dBR(t)+'</td><td style="max-width:104px;overflow:hidden;text-overflow:ellipsis">'+esc(t.desc)+'</td><td class="r num">'+num2(t.amt)+'</td><td style="max-width:78px;overflow:hidden;text-overflow:ellipsis">'+esc(t.seg||'A classificar')+'</td></tr>'}).join('')+'</tbody></table></div><p class="hint" style="margin:8px 0 0">Mostrando 8 de '+pv.length+'. Valores em R$.</p>'}
-  var label=pv.length||!en?'Importar '+pv.length+' lançamentos'+(en?' e atualizar '+en+' já importados':''):'Atualizar '+en+' lançamentos já importados';
-  return h+'<button class="btn" id="iGo" style="margin-top:12px;width:100%" '+((pv.length||en)&&!S.readonly?'':'disabled')+'>'+label+'</button></div>';
+  var needMonth=I.mode!=='hist'&&I.comp==='fatura'&&!I.monthOk;
+  var label=needMonth?'Escolha o mês do extrato para importar':(pv.length||!en?'Importar '+pv.length+' lançamentos'+(en?' e atualizar '+en+' já importados':''):'Atualizar '+en+' lançamentos já importados');
+  return h+'<button class="btn" id="iGo" style="margin-top:12px;width:100%" '+((pv.length||en)&&!needMonth&&!S.readonly?'':'disabled')+'>'+label+'</button></div>';
 }
 function renderHist(){
   var el=$('#impBody'),I=S.imp,H=I.hist;
@@ -943,6 +958,7 @@ function renderHist(){
   $('#iGo').onclick=function(){runImport(I.preview)};
 }
 function runImport(preview){
+  if(S.imp.mode!=='hist'&&S.imp.comp==='fatura'&&!S.imp.monthOk)return;
   var I=S.imp,enrich=I.enrich||[],items=preview.concat(enrich);
   I.busy=true;
   $('#impBody').innerHTML='<div class="card"><h3>Importando</h3><div class="prog"><i id="pg"></i></div><p class="hint" id="pgt" style="margin:8px 0 0">0 de '+items.length+'</p></div>';

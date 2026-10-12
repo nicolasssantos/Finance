@@ -21,6 +21,7 @@ async function newPage(scheme = 'light', ctxOpts = {}, now = NOW) {
   return { ctx, page };
 }
 const tab = (page, t) => page.locator(`.tab[data-t="${t}"]`).click();
+const pickMonth = async (pg) => { const c = pg.locator('[data-fm][data-sug]'); if (await c.count()) await c.click(); };  // responde "para qual mês é este extrato?" com o mês sugerido
 const stats = async (page) => (await page.locator('#impBody .stat b').allTextContents()).map(Number);
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 async function shot(page, name) { await page.screenshot({ path: path.join(OUT, name + '.png') }); }
@@ -204,6 +205,7 @@ const st1 = await stats(page);
 check(JSON.stringify(st1) === JSON.stringify([4, 1, 3]), 'prévia: 4 classificados, 1 a confirmar, 3 novos', st1);
 check(/1 pagamentos de fatura ignorados/.test(await page.locator('#impBody').innerText()), 'pagamento de fatura ignorado');
 await shot(page, '08-importar-extrato');
+await pickMonth(page);
 await page.locator('#iGo').click();
 await page.waitForSelector('#impBody .empty b');
 
@@ -229,6 +231,7 @@ section('6. Reimportar o mesmo extrato');
 await tab(page, 'importar');
 await page.setInputFiles('#file', ext1);
 await page.waitForSelector('[data-c="date"]');
+await pickMonth(page);
 check(/Importar 0 lançamentos/.test(await page.locator('#iGo').innerText()), 'reimportar o extrato gera 0 lançamentos novos');
 
 section('7. Confirmar e aprender');
@@ -265,6 +268,7 @@ await page.waitForSelector('[data-c="date"]');
 check(await page.locator('#iFlip').isChecked(), 'sinal negativo detectado e invertido automaticamente');
 const st2 = await stats(page);
 check(JSON.stringify(st2) === JSON.stringify([1, 1, 0]), 'CAFE CENTRAL (2 confirmações) entra sozinho; NOVO FORNECEDOR (1 confirmação) ainda pede confirmação', st2);
+await pickMonth(page);
 await page.locator('#iGo').click();
 await page.waitForSelector('#impBody .empty b');
 await tab(page, 'confirmar');
@@ -281,6 +285,7 @@ await page.setInputFiles('#file', ext3);
 await page.waitForSelector('[data-c="date"]');
 const st3 = await stats(page);
 check(JSON.stringify(st3) === JSON.stringify([1, 0, 0]), 'depois de 2 confirmações iguais, classifica sozinho', st3);
+await pickMonth(page);
 await page.locator('#iGo').click();
 await page.waitForSelector('#impBody .empty b');
 const dec = txOf(await dumpLocal(page)).find((t) => t.ym === '2026-12');
@@ -375,6 +380,7 @@ const extSet = buildExtrato('extrato-set.xlsx', [
 await tab(page, 'importar');
 await page.setInputFiles('#file', extSet);
 await page.waitForSelector('[data-c="date"]');
+await pickMonth(page);
 const goTxt = await page.locator('#iGo').innerText();
 check(/Atualizar 3 lançamentos já importados/.test(goTxt) && await page.locator('#iGo').isEnabled(), 'nada novo a importar, mas 3 lançamentos antigos ganham o cartão', goTxt);
 check(/3 ganham dados novos/.test(await page.locator('#impBody').innerText()), 'a prévia explica o que vai acontecer');
@@ -391,6 +397,7 @@ check(sep.filter((x) => !x.card).length === sep.length - 3, 'os demais de setemb
 await tab(page, 'importar');
 await page.setInputFiles('#file', extSet);
 await page.waitForSelector('[data-c="date"]');
+await pickMonth(page);
 check(/Importar 0 lançamentos/.test(await page.locator('#iGo').innerText()) && await page.locator('#iGo').isDisabled(), 'reimportar de novo não faz mais nada');
 
 await tab(page, 'ajustes');
@@ -429,6 +436,7 @@ const btxt = norm(await bp.locator('#impBody').innerText());
 check(/ano mais recente até 20\/09\/2026/.test(btxt), 'explica como tratou as datas sem ano');
 check(/2 pagamentos de fatura ignorados/.test(btxt), 'ignora o saldo anterior e o pagamento da fatura anterior');
 check(new RegExp(`soma lida \\(${brm(bra.expect.total).replace(/[$]/g, '\\$')}\\) confere com o total da fatura`).test(btxt), `soma lida confere com o total da fatura (${brm(bra.expect.total)})`, btxt.match(/soma lida[^.]*\./g));
+await pickMonth(bp);
 check(new RegExp(`Importar ${bra.expect.n} lançamentos`).test(await bp.locator('#iGo').innerText()), `${bra.expect.n} lançamentos na prévia`);
 const bfit = await bp.locator('#impBody .tbl').evaluateAll((els) => els.map((e) => [e.scrollWidth, e.clientWidth]));
 check(bfit.length === 1 && bfit.every(([sw, cw]) => sw <= cw), 'a tabela da prévia mostra a coluna Responsável sem rolar para o lado', bfit);
@@ -453,6 +461,7 @@ check(btx.every((x) => x.card), 'todo lançamento tem cartão');
 await tab(bp, 'importar');
 await bp.setInputFiles('#file', bra.file);
 await bp.waitForSelector('[data-c="date"]');
+await pickMonth(bp);
 check(/Importar 0 lançamentos/.test(await bp.locator('#iGo').innerText()) && await bp.locator('#iGo').isDisabled(), 'reimportar a mesma fatura não duplica');
 // total do arquivo diferente da soma lida: avisa
 const brBad = buildBradesco('bradesco-total-errado.xls', BR_SEC, { totalOverride: bra.expect.total + 10 });
@@ -467,7 +476,7 @@ const setRows = [
   ['19/09', 'PADARIA TESTE', 20.5, 'Nicolas', 'Padaria', 'Cartão Credito', 'Despesa'],
 ];
 const plSet = buildPlanilhaSet('planilha-set.xlsx', setRows);
-const importFile = async (pg, file, wait) => { await tab(pg, 'importar'); await pg.setInputFiles('#file', file); await pg.waitForSelector(wait); };
+const importFile = async (pg, file, wait) => { await tab(pg, 'importar'); await pg.setInputFiles('#file', file); await pg.waitForSelector(wait); await pickMonth(pg); };
 const goAndWait = async (pg) => { await pg.locator('#iGo').click(); await pg.waitForSelector('#impBody .empty b'); };
 { // A: planilha primeiro, depois o extrato
   const c = await newPage('light'); const pg = c.page;
@@ -513,6 +522,55 @@ section('9f. Fatura de janeiro com compras de dezembro (virada de ano)');
   const d = (n) => j.find((x) => x.desc.startsWith(n)).d;
   check(d('LOJA') === '2026-12-28' && d('MERCADO') === '2027-01-05' && d('CURSO') === '2026-05-03' && d('FARMACIA') === '2027-01-10', 'dezembro e a parcela antiga ficam em 2026; janeiro em 2027', j.map((x) => [x.desc, x.d]));
   check(j.every((x) => x.ym === '2027-01' && x.card === 'Nicolas'), 'todos em jan/2027, no cartão do Nicolas');
+  await c.ctx.close();
+}
+
+section('9g. O app pergunta para qual mês é o extrato');
+{
+  const c = await newPage('light'); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(pg, 'importar'); await pg.setInputFiles('#file', bra.file); await pg.waitForSelector('[data-c="date"]');
+  const q = norm(await pg.locator('#mCard').innerText());
+  check(/para qual mês é este extrato\?/i.test(q), 'a tela pergunta "Para qual mês é este extrato?" logo no topo');
+  check(/Sugestão pela última compra do arquivo: Setembro 2026/.test(q), 'sugere setembro de 2026 e diz por quê');
+  const chips = await pg.locator('#mCard [data-fm]').allTextContents();
+  check(JSON.stringify(chips) === JSON.stringify(['Agosto 2026', 'Setembro 2026 · sugerido', 'Outubro 2026']), 'oferece o mês sugerido e os vizinhos', chips);
+  check(await pg.locator('#iGo').isDisabled() && /Escolha o mês do extrato para importar/.test(await pg.locator('#iGo').innerText()), 'enquanto você não responde, o botão de importar fica travado');
+  check(await pg.locator('#mCard [data-fm].on').count() === 0, 'nenhum mês vem escolhido por padrão (a sugestão não vale como resposta)');
+  await shot(pg, '20-pergunta-mes');
+  // um mês antes de 2026 é recusado
+  await pg.locator('#iFat').fill('2025-12');
+  check(/começa em janeiro de 2026/.test(await pg.locator('#toast').innerText()) && await pg.locator('#iGo').isDisabled(), 'mês anterior a 2026 é recusado');
+  // outro mês pelo campo
+  await pg.locator('#iFat').fill('2026-08');
+  check(await pg.locator('#iGo').isEnabled() && /Importando para Agosto 2026/.test(norm(await pg.locator('#mCard').innerText())), 'escolher "Outro mês" libera o botão e confirma o mês');
+  // escolhe outubro pelo botão (diferente da sugestão)
+  await pg.locator('#mCard [data-fm="2026-10"]').click();
+  check(/Importando para Outubro 2026/.test(norm(await pg.locator('#mCard').innerText())) && await pg.locator('#mCard [data-fm="2026-10"].on').count() === 1, 'o mês escolhido aparece marcado e confirmado');
+  await shot(pg, '21-mes-escolhido');
+  await goAndWait(pg);
+  const tx = txOf(await dumpLocal(pg));
+  check(tx.length === bra.expect.n && tx.every((x) => x.ym === '2026-10'), 'todos os lançamentos entram em outubro, o mês escolhido', [...new Set(tx.map((x) => x.ym))]);
+  check(tx.find((x) => x.desc.startsWith('MAQUINA')).d === '2025-09-23' && tx.find((x) => x.desc === 'MERCADO TESTE' && x.amt === 100).d === '2026-09-20', 'escolher outro mês não muda as datas das compras (o ano vem do arquivo)');
+  await c.ctx.close();
+}
+{
+  const c = await newPage('light'); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(pg, 'importar'); await pg.setInputFiles('#file', bra.file); await pg.waitForSelector('[data-c="date"]');
+  await pg.locator('#mCard [data-comp="compra"]').click();
+  check(/mês da própria compra/.test(await pg.locator('#mCard').innerText()) && await pg.locator('#iGo').isEnabled(), '"Usar o mês de cada compra" dispensa a escolha e libera o botão');
+  await goAndWait(pg);
+  const tx = txOf(await dumpLocal(pg));
+  const months = [...new Set(tx.map((x) => x.ym))].sort();
+  check(months.includes('2026-09') && months.includes('2026-02') && months.includes('2025-11') && tx.every((x) => x.ym === x.d.slice(0, 7)), 'cada lançamento fica no mês da própria compra', months);
+  await c.ctx.close();
+}
+{ // planilha de histórico não tem a pergunta (cada aba já é um mês)
+  const c = await newPage('light'); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(pg, 'importar'); await pg.setInputFiles('#file', plSet); await pg.waitForSelector('#hYear');
+  check(await pg.locator('#mCard').count() === 0 && await pg.locator('#iGo').isEnabled(), 'planilha de histórico não pergunta o mês (cada aba já é um mês)');
   await c.ctx.close();
 }
 
