@@ -1,1 +1,69 @@
-# Finance
+# Controle de Finanças
+
+App web para o celular que substitui a planilha de gastos da casa e da Fazenda Mirante do Juá.
+Você importa o extrato do cartão (Excel) todo mês, o app classifica o que já conhece, pede confirmação quando tem dúvida e marca em amarelo o que é novo.
+
+As regras de negócio e o histórico do projeto estão em [`docs/briefing.md`](docs/briefing.md).
+
+## Onde ficam os dados
+
+| Modo | Quando | Dados |
+|---|---|---|
+| **Nuvem** (recomendado) | `config.js` tem o bloco `firebase` | Na sua conta Firebase (Firestore), iguais em todos os aparelhos. Login por e-mail e senha. Sem sinal, o app grava no aparelho e envia quando a internet volta. |
+| **Local** (só para testar) | `config.js` sem o bloco `firebase` | Só no navegador deste aparelho. Se limpar o navegador, perde. O app mostra um aviso vermelho/laranja enquanto estiver neste modo. |
+
+Cada usuário só lê e grava a própria área (`users/{uid}/...`), garantido por [`firestore.rules`](firestore.rules).
+
+## Ligar a nuvem (uma vez, ~10 minutos)
+
+1. Em <https://console.firebase.google.com>, **Adicionar projeto** (pode desligar o Google Analytics).
+2. **Build > Firestore Database > Criar banco de dados**, modo de produção, região `southamerica-east1` (São Paulo).
+3. **Build > Authentication > Vamos começar > E-mail/senha > Ativar**. Na aba **Users**, **Adicionar usuário** com o seu e-mail e uma senha forte. Em **Settings > User actions**, desmarque *Enable create (sign-up)* para ninguém mais criar conta.
+4. **Configurações do projeto > Seus apps > Web (`</>`)**, registre o app e copie o objeto `firebaseConfig`.
+5. Cole esse objeto em [`config.js`](config.js), no campo `firebase`. Esses valores não são segredo; quem protege os dados são o login e as regras.
+6. Publique (precisa de Node.js):
+   ```bash
+   npm install -g firebase-tools
+   firebase login
+   firebase use --add          # escolha o projeto
+   firebase deploy             # publica o app (Hosting) e as regras de segurança (Firestore)
+   ```
+   O app fica em `https://SEU-PROJETO.web.app`.
+7. No celular, abra o endereço, entre e use **Adicionar à tela inicial**. Abre como app, até sem internet.
+8. Primeira carga: **Importar** > escolha a planilha `Financas_2026_v1.xlsm`. O app reconhece o formato e traz Janeiro a Setembro.
+
+Cotas gratuitas do plano Spark (50 mil leituras e 20 mil gravações por dia no Firestore) são folgadas para este uso: cada abertura lê os lançamentos dos últimos 3 anos, cerca de mil por ano.
+
+## Uso mensal
+
+1. **Importar**: escolha o extrato do cartão (`.xlsx`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
+2. **Confirmar**: o que o app não tem certeza aparece aqui. Laranja = sugestão para confirmar, amarelo = lugar novo. Depois de 2 confirmações iguais ele passa a classificar sozinho.
+3. **Resumo** e **Gastos**: para onde o dinheiro está indo, por casa x fazenda, responsável, categoria e mês.
+4. **Ajustes > Backup**: baixe um backup JSON de vez em quando (restaura tudo, inclusive aprendizado). O Excel é só para consulta.
+
+## Estrutura
+
+```
+index.html          o app (HTML, CSS e JS)
+backend.js          armazenamento: Firebase (nuvem) ou IndexedDB (local)
+config.js           onde você cola a configuração do Firebase
+sw.js, manifest…    instalar na tela inicial e abrir sem internet
+firestore.rules     regras: cada usuário só acessa a própria área
+firebase.json       hospedagem e emuladores
+vendor/             SheetJS e Firebase SDK, versionados para funcionar offline
+tests/              testes de ponta a ponta no navegador
+docs/briefing.md    regras de negócio e histórico
+```
+
+## Testes
+
+```bash
+npm install
+npm test              # modo local, Chromium com viewport de celular (61 verificações)
+npm run test:cloud    # contra o emulador do Firebase (precisa de Java; 24 verificações)
+```
+
+`npm test` importa uma planilha e extratos sintéticos e confere totais, deduplicação, classificação, aprendizado, backup/restauração, modo escuro e abertura sem internet. Capturas de tela ficam em `tests/out/`.
+`npm run test:cloud` confere login, sincronização entre dois aparelhos, as regras de segurança (outro usuário e visitante recebem 403) e gravação sem sinal.
+
+Para rodar o app localmente: `npm run serve` e abra <http://localhost:5173>.
