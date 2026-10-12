@@ -46,7 +46,8 @@ O app está publicado no Netlify, em <https://casa-fazenda-saude-financeira.netl
 
 1. **Importar**: escolha o extrato do cartão (`.xlsx`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
 2. **Confirmar**: o que o app não tem certeza aparece aqui. Laranja = sugestão para confirmar, amarelo = lugar novo. Depois de 2 confirmações iguais ele passa a classificar sozinho.
-3. **Resumo** e **Gastos**: para onde o dinheiro está indo, por casa x fazenda, responsável, categoria e mês.
+3. **Resumo** e **Gastos**: para onde o dinheiro está indo, por casa x fazenda, responsável, categoria e mês. Cada gasto mostra de qual cartão saiu (Nicolas, Ana Paula ou Eduardo).
+   - No **Resumo**, a chave **Mês | Ano** troca para o **histórico do ano**: escolha o ano (2026 em diante) e veja janeiro a dezembro num gráfico e numa tabela, com total, média mensal e saldo. Toque em um mês para abri-lo.
 4. **Ajustes > Backup**: baixe um backup JSON de vez em quando (restaura tudo, inclusive aprendizado). O Excel é só para consulta.
 
 ## Estrutura

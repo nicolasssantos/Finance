@@ -64,6 +64,7 @@ button{cursor:pointer}
 .mnav{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .mnav .m{font-weight:600;font-size:16px;text-transform:capitalize}
 .ibtn{background:var(--surface);border:1px solid var(--line);border-radius:10px;width:40px;height:40px;display:flex;align-items:center;justify-content:center}
+.ibtn[disabled]{opacity:.35;cursor:not-allowed}
 .ibtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .big{font-family:var(--mono);font-weight:500;font-size:34px;letter-spacing:-.02em;line-height:1.1}
 .delta{font-size:13px;color:var(--ink2)}
@@ -133,6 +134,12 @@ table{border-collapse:collapse;width:100%;font-size:13px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--muted);font-weight:500;font-size:12px}
 td.r,th.r{text-align:right}
+/* tabelas compactas: cabem em 328 px, sem rolar para o lado */
+.tbl table.tight th,.tbl table.tight td{padding:6px 5px;font-size:12.5px}
+.tbl table.tight td.num{font-size:12px}
+tr.go{cursor:pointer}
+tr.go:active{background:var(--bg)}
+tr.tot td{font-weight:600;border-top:2px solid var(--line)}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .stat{background:var(--bg);border-radius:10px;padding:8px 10px}
 .stat b{display:block;font-family:var(--mono);font-size:18px}
@@ -224,6 +231,8 @@ function cardOf(holder){return holder==='Fazenda'?'Eduardo':(holder==='Nicolas'|
 function cardTag(t){return t.card&&!isR(t)?'<span class="ctag">Cartão '+esc(t.card)+'</span>':''}
 var MESES_FULL=['Janeiro','Fevereiro','Março','Abril','Maio','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 var MES=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+var MESES_NOME=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+var MIN_YEAR=2026,MIN_YM='2026-01';  /* o app começa em 2026 */
 function grpOfResp(r){return !r?'':(CASA.indexOf(r)>=0?'casa':'fazenda')}
 function atvOf(r){if(!r)return 'A classificar';if(CASA.indexOf(r)>=0)return 'Casa';var b=r.replace(/^Investimento /,'');return b==='Combustivel'?'Combustível':(ATVS.indexOf(b)>=0?b:'Outros')}
 function isInv(r){return /^Investimento /.test(r||'')}
@@ -248,7 +257,7 @@ function round2(n){return Math.round(n*100)/100}
 
 /* ---------- estado ---------- */
 var S={db:null,tx:{},years:{},cfg:{holders:Object.assign({},DEF_HOLDERS),cats:DEF_CATS.slice(),map:null},
-  tab:'resumo',ym:ymNow(),catGrp:'all',gf:'all',q:'',draft:{},showAll:false,imp:null,readonly:false,ready:false,err:''};
+  tab:'resumo',ym:ymNow()<MIN_YM?MIN_YM:ymNow(),rview:'mes',year:Math.max(MIN_YEAR,new Date().getFullYear()),catGrp:'all',gf:'all',q:'',draft:{},showAll:false,imp:null,readonly:false,ready:false,err:''};
 var statsCache=null;
 function allTx(){var a=[];for(var y in S.tx){for(var id in S.tx[y])a.push(S.tx[y][id])}return a}
 function findTx(id){for(var y in S.tx){if(S.tx[y][id])return S.tx[y][id]}return null}
@@ -403,10 +412,10 @@ function render(){
 /* um redesenho no meio da digitação apagaria o campo; sincronizações podem chegar a qualquer momento */
 function typingIn(sel){var a=document.activeElement;return !!(a&&a.closest&&a.closest(sel)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))}
 function monthNav(){
-  return '<button class="ibtn" data-mv="-1" aria-label="Mês anterior"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="m">'+ymLabel(S.ym)+'</div><button class="ibtn" data-mv="1" aria-label="Próximo mês"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>';
+  return '<button class="ibtn" data-mv="-1" aria-label="Mês anterior"'+(S.ym<=MIN_YM?' disabled':'')+'><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="m">'+ymLabel(S.ym)+'</div><button class="ibtn" data-mv="1" aria-label="Próximo mês"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>';
 }
 function bindMonthNav(root){
-  $$('[data-mv]',root).forEach(function(b){b.onclick=function(){S.ym=ymAdd(S.ym,+b.dataset.mv);ensureYear(S.ym.slice(0,4));render()}});
+  $$('[data-mv]',root).forEach(function(b){b.onclick=function(){var n=ymAdd(S.ym,+b.dataset.mv);if(n<MIN_YM)return;S.ym=n;ensureYear(S.ym.slice(0,4));render()}});
 }
 function sum(list){return list.reduce(function(a,t){return a+t.amt},0)}
 function monthTx(ym){return allTx().filter(function(t){return t.ym===ym})}
@@ -414,6 +423,69 @@ function despOf(list){return list.filter(function(t){return !isR(t)})}
 function recOf(list){return list.filter(isR)}
 function totalsBy(list,fn){var m={};list.forEach(function(t){var k=fn(t);m[k]=(m[k]||0)+t.amt});return m}
 
+/* anos disponíveis: de 2026 em diante, até o ano seguinte ao último com dados (ou ao atual) */
+function yearsAvail(include){
+  var mx=Math.max(MIN_YEAR,new Date().getFullYear(),include||0);
+  Object.keys(S.tx).forEach(function(y){if(+y>mx&&Object.keys(S.tx[y]).length)mx=+y});
+  var a=[];for(var y=MIN_YEAR;y<=mx+1;y++)a.push(y);
+  return a;
+}
+function num2(n){return n.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function num0(n){return Math.round(n).toLocaleString('pt-BR')}
+function notices(){
+  var pc=pendingCount(),h='';
+  if(pc)h+='<div class="alert"><span>'+pc+' '+(pc===1?'lançamento':'lançamentos')+' para confirmar</span><button id="goConf">Revisar</button></div>';
+  if(Backend.mode==='local')h+='<div class="warn">Dados só neste navegador. Veja Ajustes para guardar na nuvem.</div>';
+  return h;
+}
+function splitBlock(casa,faz,tot){
+  var h='<div class="split" aria-hidden="true"><i style="width:'+(casa/tot*100)+'%;background:var(--s1)"></i><i style="width:'+(faz/tot*100)+'%;background:var(--s2)"></i></div>';
+  h+='<div class="kv"><span class="l"><span class="dot" style="background:var(--s1)"></span>Casa</span><span class="num">'+money(casa)+'<span class="pct">'+(casa/tot*100).toFixed(0)+'%</span></span></div>';
+  h+='<div class="kv" style="margin-top:6px"><span class="l"><span class="dot" style="background:var(--s2)"></span>Fazenda</span><span class="num">'+money(faz)+'<span class="pct">'+(faz/tot*100).toFixed(0)+'%</span></span></div>';
+  return h;
+}
+/* responsável, casa por pessoa, categoria e maiores lugares de uma lista de despesas (um mês ou um ano) */
+function breakdownCards(cd,tot){
+  var h='';
+  var rt=totalsBy(cd,function(t){return t.seg||'A classificar'}),keys=Object.keys(rt).sort(function(a,b){return rt[b]-rt[a]}),mx=Math.max.apply(null,keys.map(function(k){return Math.abs(rt[k])}));
+  h+='<div class="card"><h3>Por responsável</h3><div class="rows">';
+  keys.forEach(function(k){
+    h+='<div class="brow"><div class="nm">'+dot(k)+'<span>'+esc(k)+'</span></div><div class="v num">'+money(rt[k])+'<span class="pct">'+(rt[k]/tot*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+Math.max(0,rt[k]/mx*100)+'%;background:'+barBg(k)+'"></i></div></div>';
+  });
+  h+='</div><div class="legend"><span>Listrado = investimento</span></div></div>';
+  var N=rt['Nicolas']||0,A=rt['Ana Paula']||0,Sh=rt['Nicolas & Ana Paula']||0;
+  if(N+A+Sh>0)h+='<div class="card"><h3>Casa por pessoa</h3><div class="kv"><span>Nicolas</span><span class="num">'+money(N+Sh/2)+'</span></div><div class="kv" style="margin-top:6px"><span>Ana Paula</span><span class="num">'+money(A+Sh/2)+'</span></div><p class="hint" style="margin:8px 0 0">Inclui metade do compartilhado ('+money(Sh)+').</p></div>';
+  var cf=cd.filter(function(t){return S.catGrp==='all'||grpOfResp(t.seg)===(S.catGrp==='casa'?'casa':'fazenda')});
+  var cm=totalsBy(cf,function(t){return t.cat||'Sem categoria'});
+  var ck=Object.keys(cm).sort(function(a,b){return cm[b]-cm[a]}).slice(0,8),cmx=ck.length?Math.max.apply(null,ck.map(function(k){return Math.abs(cm[k])})):1,ct=sum(cf);
+  h+='<div class="card"><h3>Por categoria</h3><div class="chips" style="margin-bottom:12px">'+[['all','Tudo'],['casa','Casa'],['faz','Fazenda']].map(function(x){return '<button class="chip'+(S.catGrp===x[0]?' on':'')+'" data-cg="'+x[0]+'">'+x[1]+'</button>'}).join('')+'</div><div class="rows">';
+  ck.forEach(function(k){h+='<div class="brow"><div class="nm"><span>'+esc(k)+'</span></div><div class="v num">'+money(cm[k])+'<span class="pct">'+(ct?(cm[k]/ct*100).toFixed(0):0)+'%</span></div><div class="bar"><i style="width:'+Math.max(0,cm[k]/cmx*100)+'%;background:var(--accent)"></i></div></div>'});
+  if(!ck.length)h+='<div class="hint">Nada neste filtro.</div>';
+  h+='</div></div>';
+  var mm={};cd.forEach(function(t){var e=mm[t.key]||(mm[t.key]={n:t.desc,v:0,c:0});e.v+=t.amt;e.c++});
+  var mk=Object.keys(mm).sort(function(a,b){return mm[b].v-mm[a].v}).slice(0,8);
+  h+='<div class="card"><h3>Maiores lugares</h3><div class="rows">';
+  mk.forEach(function(k){h+='<div class="kv"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">'+esc(mm[k].n)+(mm[k].c>1?'<span class="pct">×'+mm[k].c+'</span>':'')+'</span><span class="num">'+money(mm[k].v)+'</span></div>'});
+  h+='</div></div>';
+  return h;
+}
+function resumoToggle(){
+  return '<div class="chips" id="rToggle">'+[['mes','Mês'],['ano','Ano']].map(function(x){return '<button class="chip'+(S.rview===x[0]?' on':'')+'" data-rv="'+x[0]+'">'+x[1]+'</button>'}).join('')+'</div>';
+}
+function setRv(v){
+  S.rview=v;
+  if(v==='ano'){S.year=Math.max(MIN_YEAR,+S.ym.slice(0,4));ensureYear(String(S.year))}
+  render();
+}
+function bindResumo(el){
+  bindMonthNav(el);
+  var gc=$('#goConf');if(gc)gc.onclick=function(){setTab('confirmar')};
+  $$('[data-cg]',el).forEach(function(b){b.onclick=function(){S.catGrp=b.dataset.cg;renderResumo()}});
+  $$('[data-bar]',el).forEach(function(b){b.onclick=function(){S.ym=b.getAttribute('data-bar');render()}});
+  $$('[data-gom]',el).forEach(function(b){b.onclick=function(){S.ym=b.getAttribute('data-gom');S.rview='mes';ensureYear(S.ym.slice(0,4));render()}});
+  $$('[data-rv]',el).forEach(function(b){b.onclick=function(){setRv(b.dataset.rv)}});
+  var ys=$('#yrSel');if(ys)ys.onchange=function(){S.year=+ys.value;ensureYear(String(S.year));renderResumo()};
+}
 function renderResumo(){
   var el=$('#v-resumo'),txs=allTx();
   if(S.err&&!txs.length){el.innerHTML='<div class="warn">'+esc(S.err)+'</div>';return}
@@ -422,74 +494,81 @@ function renderResumo(){
     el.innerHTML='<div class="card empty"><b>Nenhum lançamento ainda</b><span>Traga o histórico da sua planilha Finanças. Os meses aparecem aqui por responsável (Nicolas, Ana Paula, Leite, Granja, Peixe, Investimentos) e por categoria.</span><button class="btn" id="goImp">Importar a planilha</button></div>';
     var g=$('#goImp');if(g)g.onclick=function(){setTab('importar')};return;
   }
+  if(S.rview==='ano'){renderAno(el);bindResumo(el);return}
   var cur=monthTx(S.ym),cd=despOf(cur),cr=recOf(cur),prevD=despOf(monthTx(ymAdd(S.ym,-1)));
   var tot=sum(cd),rec=sum(cr),ptot=sum(prevD);
   var casa=sum(cd.filter(function(t){return grpOfResp(t.seg)==='casa'}));
-  var faz=tot-casa,pc=pendingCount();
-  var h='<div class="mnav" id="rMnav">'+monthNav()+'</div>';
+  var faz=tot-casa;
+  var h=resumoToggle()+'<div class="mnav" id="rMnav">'+monthNav()+'</div>';
   h+='<div class="card"><h3>Despesas do mês</h3><div class="big">'+money(tot)+'</div>';
   if(ptot){var dl=(tot-ptot)/Math.abs(ptot)*100;h+='<div class="delta">'+(dl>=0?'+':'')+dl.toFixed(0)+'% frente a '+ymShort(ymAdd(S.ym,-1))+' ('+money(ptot)+')</div>'}
   if(rec>0){var sd=rec-tot;h+='<div class="kv" style="margin-top:10px"><span class="hint">Receitas '+money(rec)+'</span><span class="num '+(sd>=0?'pos':'neg')+'">Saldo '+money(sd)+'</span></div>'}
-  if(tot>0){
-    h+='<div class="split" aria-hidden="true"><i style="width:'+(casa/tot*100)+'%;background:var(--s1)"></i><i style="width:'+(faz/tot*100)+'%;background:var(--s2)"></i></div>';
-    h+='<div class="kv"><span class="l"><span class="dot" style="background:var(--s1)"></span>Casa</span><span class="num">'+money(casa)+'<span class="pct">'+(casa/tot*100).toFixed(0)+'%</span></span></div>';
-    h+='<div class="kv" style="margin-top:6px"><span class="l"><span class="dot" style="background:var(--s2)"></span>Fazenda</span><span class="num">'+money(faz)+'<span class="pct">'+(faz/tot*100).toFixed(0)+'%</span></span></div>';
-  } else h+='<div class="delta" style="margin-top:8px">Sem despesas neste mês.</div>';
-  h+='</div>';
-  if(pc)h+='<div class="alert"><span>'+pc+' '+(pc===1?'lançamento':'lançamentos')+' para confirmar</span><button id="goConf">Revisar</button></div>';
-  if(Backend.mode==='local')h+='<div class="warn">Dados só neste navegador. Veja Ajustes para guardar na nuvem.</div>';
-  if(tot>0){
-    var rt=totalsBy(cd,function(t){return t.seg||'A classificar'}),keys=Object.keys(rt).sort(function(a,b){return rt[b]-rt[a]}),mx=Math.max.apply(null,keys.map(function(k){return Math.abs(rt[k])}));
-    h+='<div class="card"><h3>Por responsável</h3><div class="rows">';
-    keys.forEach(function(k){
-      h+='<div class="brow"><div class="nm">'+dot(k)+'<span>'+esc(k)+'</span></div><div class="v num">'+money(rt[k])+'<span class="pct">'+(rt[k]/tot*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+Math.max(0,rt[k]/mx*100)+'%;background:'+barBg(k)+'"></i></div></div>';
-    });
-    h+='</div><div class="legend"><span>Listrado = investimento</span></div></div>';
-    var N=rt['Nicolas']||0,A=rt['Ana Paula']||0,Sh=rt['Nicolas & Ana Paula']||0;
-    if(N+A+Sh>0)h+='<div class="card"><h3>Casa por pessoa</h3><div class="kv"><span>Nicolas</span><span class="num">'+money(N+Sh/2)+'</span></div><div class="kv" style="margin-top:6px"><span>Ana Paula</span><span class="num">'+money(A+Sh/2)+'</span></div><p class="hint" style="margin:8px 0 0">Inclui metade do compartilhado ('+money(Sh)+').</p></div>';
-    var cf=cd.filter(function(t){return S.catGrp==='all'||grpOfResp(t.seg)===(S.catGrp==='casa'?'casa':'fazenda')});
-    var cm=totalsBy(cf,function(t){return t.cat||'Sem categoria'});
-    var ck=Object.keys(cm).sort(function(a,b){return cm[b]-cm[a]}).slice(0,8),cmx=ck.length?Math.max.apply(null,ck.map(function(k){return Math.abs(cm[k])})):1,ct=sum(cf);
-    h+='<div class="card"><h3>Por categoria</h3><div class="chips" style="margin-bottom:12px">'+[['all','Tudo'],['casa','Casa'],['faz','Fazenda']].map(function(x){return '<button class="chip'+(S.catGrp===x[0]?' on':'')+'" data-cg="'+x[0]+'">'+x[1]+'</button>'}).join('')+'</div><div class="rows">';
-    ck.forEach(function(k){h+='<div class="brow"><div class="nm"><span>'+esc(k)+'</span></div><div class="v num">'+money(cm[k])+'<span class="pct">'+(ct?(cm[k]/ct*100).toFixed(0):0)+'%</span></div><div class="bar"><i style="width:'+Math.max(0,cm[k]/cmx*100)+'%;background:var(--accent)"></i></div></div>'});
-    if(!ck.length)h+='<div class="hint">Nada neste filtro.</div>';
-    h+='</div></div>';
-    var mm={};cd.forEach(function(t){var e=mm[t.key]||(mm[t.key]={n:t.desc,v:0,c:0});e.v+=t.amt;e.c++});
-    var mk=Object.keys(mm).sort(function(a,b){return mm[b].v-mm[a].v}).slice(0,8);
-    h+='<div class="card"><h3>Maiores lugares</h3><div class="rows">';
-    mk.forEach(function(k){h+='<div class="kv"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">'+esc(mm[k].n)+(mm[k].c>1?'<span class="pct">×'+mm[k].c+'</span>':'')+'</span><span class="num">'+money(mm[k].v)+'</span></div>'});
-    h+='</div></div>';
-  }
+  if(tot>0)h+=splitBlock(casa,faz,tot);
+  else h+='<div class="delta" style="margin-top:8px">Sem despesas neste mês.</div>';
+  h+='</div>'+notices();
+  if(tot>0)h+=breakdownCards(cd,tot);
   h+=trendCard();
   el.innerHTML=h;
-  bindMonthNav(el);
-  var gc=$('#goConf');if(gc)gc.onclick=function(){setTab('confirmar')};
-  $$('[data-cg]',el).forEach(function(b){b.onclick=function(){S.catGrp=b.dataset.cg;renderResumo()}});
-  $$('[data-bar]',el).forEach(function(b){b.onclick=function(){S.ym=b.getAttribute('data-bar');render()}});
+  bindResumo(el);
 }
-function trendCard(){
-  var months=[];for(var i=5;i>=0;i--)months.push(ymAdd(S.ym,-i));
+/* histórico do ano: janeiro a dezembro */
+function renderAno(el){
+  var y=S.year,ys=String(y),months=[];for(var i=1;i<=12;i++)months.push(ys+'-'+pad(i));
+  var tx=allTx().filter(function(t){return t.ym.slice(0,4)===ys}),cd=despOf(tx),cr=recOf(tx);
+  var tot=sum(cd),rec=sum(cr),casa=sum(cd.filter(function(t){return grpOfResp(t.seg)==='casa'})),faz=tot-casa;
+  var nm=months.filter(function(m){return despOf(monthTx(m)).length>0}).length;
+  var h=resumoToggle()+'<label class="f" style="max-width:180px">Ano<select id="yrSel" aria-label="Ano">'+yearsAvail(y).map(function(a){return '<option'+(a===y?' selected':'')+'>'+a+'</option>'}).join('')+'</select></label>';
+  h+='<div class="card"><h3>Despesas de '+y+'</h3><div class="big">'+money(tot)+'</div>';
+  if(nm)h+='<div class="delta">Média de '+money(tot/nm)+' por mês ('+nm+' '+(nm===1?'mês':'meses')+' com lançamentos)</div>';
+  if(rec>0){var sd=rec-tot;h+='<div class="kv" style="margin-top:10px"><span class="hint">Receitas '+money(rec)+'</span><span class="num '+(sd>=0?'pos':'neg')+'">Saldo '+money(sd)+'</span></div>'}
+  if(tot>0)h+=splitBlock(casa,faz,tot);
+  else h+='<div class="delta" style="margin-top:8px">Sem despesas em '+y+'.</div>';
+  h+='</div>'+notices();
+  if(tot>0||rec>0){
+    h+=yearChartCard(months,y);
+    if(tot>0)h+=breakdownCards(cd,tot);
+  }else h+='<div class="card empty"><b>Sem lançamentos em '+y+'</b><span>Importe a planilha desse ano em Importar ou faça lançamentos manuais.</span></div>';
+  el.innerHTML=h;
+}
+/* barras empilhadas por atividade; gom=true: toque na barra abre o mês */
+function chartSvg(months,gom){
   var data=months.map(function(m){var tx=despOf(monthTx(m));return {m:m,sg:totalsBy(tx,function(t){return atvOf(t.seg)}),t:sum(tx)}});
-  var mx=Math.max.apply(null,data.map(function(d){return d.t}).concat([1]));
-  var W=360,H=190,pt=22,pb=24,ph=H-pt-pb,bw=36,gap=(W-6*bw)/7;
-  var svg='<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Despesas dos últimos seis meses por atividade">';
+  var n=months.length,mx=Math.max.apply(null,data.map(function(d){return d.t}).concat([1]));
+  var W=360,H=190,pt=22,pb=24,ph=H-pt-pb,bw=n>6?22:36,gap=(W-n*bw)/(n+1),fs=n>6?10:11,attr=gom?'data-gom':'data-bar';
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="'+(gom?'Despesas mês a mês por atividade':'Despesas dos últimos seis meses por atividade')+'">';
   svg+='<line x1="0" x2="'+W+'" y1="'+(pt+ph)+'" y2="'+(pt+ph)+'" stroke="var(--line)" stroke-width="1"/>';
   data.forEach(function(d,i){
     var x=gap+i*(bw+gap),y=pt+ph,sel=d.m===S.ym;
-    svg+='<g data-bar="'+d.m+'" style="cursor:pointer"><title>'+ymLabel(d.m)+': '+money(d.t)+'</title><rect x="'+x+'" y="'+pt+'" width="'+bw+'" height="'+(ph+22)+'" fill="transparent"/>';
+    svg+='<g '+attr+'="'+d.m+'" style="cursor:pointer"><title>'+ymLabel(d.m)+': '+money(d.t)+'</title><rect x="'+(x-gap/2)+'" y="'+pt+'" width="'+(bw+gap)+'" height="'+(ph+22)+'" fill="transparent"/>';
     ATVS.forEach(function(k){
       var v=d.sg[k]||0;if(v<=0)return;
       var h=v/mx*ph;if(h<1)h=1;y-=h;
       svg+='<rect x="'+x+'" y="'+y+'" width="'+bw+'" height="'+Math.max(h-2,1)+'" rx="3" fill="var('+ATVVAR[k]+')"/>';
     });
-    if(d.t>0)svg+='<text x="'+(x+bw/2)+'" y="'+(y-6)+'" text-anchor="middle" font-size="11" style="fill:var(--ink2)">'+kfmt(d.t)+'</text>';
-    svg+='<text x="'+(x+bw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="12" style="fill:'+(sel?'var(--ink)':'var(--muted)')+';font-weight:'+(sel?600:400)+'">'+ymShort(d.m)+'</text></g>';
+    if(d.t>0)svg+='<text x="'+(x+bw/2)+'" y="'+(y-6)+'" text-anchor="middle" font-size="'+fs+'" style="fill:var(--ink2)">'+kfmt(d.t)+'</text>';
+    svg+='<text x="'+(x+bw/2)+'" y="'+(H-6)+'" text-anchor="middle" font-size="'+(n>6?11:12)+'" style="fill:'+((!gom&&sel)?'var(--ink)':'var(--muted)')+';font-weight:'+((!gom&&sel)?600:400)+'">'+ymShort(d.m)+'</text></g>';
   });
   svg+='</svg>';
   var used={};data.forEach(function(d){for(var k in d.sg)used[k]=1});
   var lg=ATVS.filter(function(k){return used[k]}).map(function(k){return '<span><span class="dot" style="background:var('+ATVVAR[k]+')"></span>'+esc(k)+'</span>'}).join('');
-  var tb='<div class="tbl" style="margin-top:10px"><table><thead><tr><th>Mês</th><th class="r">Casa</th><th class="r">Fazenda</th><th class="r">Despesas</th></tr></thead><tbody>'+data.slice().reverse().map(function(d){var c=d.sg['Casa']||0;return '<tr><td>'+ymLabel(d.m)+'</td><td class="r num">'+money(c)+'</td><td class="r num">'+money(d.t-c)+'</td><td class="r num">'+money(d.t)+'</td></tr>'}).join('')+'</tbody></table></div>';
-  return '<div class="card"><h3>Últimos 6 meses</h3>'+svg+'<div class="legend">'+lg+'</div>'+tb+'</div>';
+  return {data:data,svg:svg,legend:lg};
+}
+function trendCard(){
+  var months=[];for(var i=5;i>=0;i--)months.push(ymAdd(S.ym,-i));
+  var c=chartSvg(months,false),data=c.data;
+  var tb='<div class="tbl" style="margin-top:10px"><table class="tight"><thead><tr><th>Mês</th><th class="r">Casa</th><th class="r">Fazenda</th><th class="r">Despesas</th></tr></thead><tbody>'+data.slice().reverse().map(function(d){var c1=d.sg['Casa']||0;return '<tr><td>'+ymLabel(d.m)+'</td><td class="r num">'+num2(c1)+'</td><td class="r num">'+num2(d.t-c1)+'</td><td class="r num">'+num2(d.t)+'</td></tr>'}).join('')+'</tbody></table></div><p class="hint" style="margin:8px 0 0">Valores em R$.</p>';
+  return '<div class="card"><h3>Últimos 6 meses</h3>'+c.svg+'<div class="legend">'+c.legend+'</div>'+tb+'</div>';
+}
+function yearChartCard(months,y){
+  var c=chartSvg(months,true),tc=0,tf=0,tt=0,tr=0;
+  var cell=function(v){return '<td class="r num">'+(v?num0(v):'—')+'</td>'};
+  var rows=c.data.map(function(d,i){
+    var c1=d.sg['Casa']||0,f1=d.t-c1,r1=sum(recOf(monthTx(d.m)));
+    tc+=c1;tf+=f1;tt+=d.t;tr+=r1;
+    return '<tr class="go" data-gom="'+d.m+'"><td>'+MESES_NOME[i].slice(0,3)+'</td>'+cell(c1)+cell(f1)+cell(d.t)+cell(r1)+'</tr>';
+  }).join('');
+  rows+='<tr class="tot"><td>Total</td>'+cell(tc)+cell(tf)+cell(tt)+cell(tr)+'</tr>';
+  return '<div class="card"><h3>Mês a mês em '+y+'</h3>'+c.svg+'<div class="legend">'+c.legend+'</div><div class="tbl" style="margin-top:10px"><table class="tight"><thead><tr><th>Mês</th><th class="r">Casa</th><th class="r">Fazenda</th><th class="r">Despesas</th><th class="r">Receitas</th></tr></thead><tbody>'+rows+'</tbody></table></div><p class="hint" style="margin:8px 0 0">Valores em R$, sem centavos. Toque em um mês para abri-lo.</p></div>';
 }
 
 /* ---- confirmar ---- */
@@ -782,7 +861,7 @@ function renderHist(){
   var cands=[];sel.forEach(function(n){cands=cands.concat(H.parsed[n]||[])});
   var f=finalize(cands.map(function(c){return Object.assign({},c)}));
   I.preview=f.out;I.dup=f.dup;I.enrich=f.enrich;I.skipped=0;I.noHolder=0;
-  var h='<div class="card"><h3>Planilha de controle reconhecida</h3><p class="hint" style="margin:0 0 10px">Cada aba vira um mês. Responsável, Despesa, Método e Entrada vs Saída entram como estão. Linhas sem responsável ou sem categoria vão para a aba Confirmar.</p><label class="f" style="max-width:160px;margin-bottom:8px">Ano da planilha<input type="number" id="hYear" value="'+H.year+'" min="2000" max="2100"></label>';
+  var h='<div class="card"><h3>Planilha de controle reconhecida</h3><p class="hint" style="margin:0 0 10px">Cada aba vira um mês. Responsável, Despesa, Método e Entrada vs Saída entram como estão. Linhas sem responsável ou sem categoria vão para a aba Confirmar.</p><label class="f" style="max-width:160px;margin-bottom:8px">Ano da planilha<select id="hYear">'+yearsAvail(H.year).map(function(a){return '<option'+(a===H.year?' selected':'')+'>'+a+'</option>'}).join('')+'</select></label>';
   H.names.forEach(function(n){
     var l=H.parsed[n]||[],d=sum(despOf(l)),pend=l.filter(function(t){return t.status!=='ok'}).length,future=MESES_FULL.indexOf(n)+1>H.curM&&H.year>=H.curY;
     h+='<label class="cbrow"><input type="checkbox" data-hn="'+esc(n)+'" '+(H.on[n]?'checked':'')+'><span class="grow"><b>'+esc(n)+'</b>'+(future?' <span class="pct">planejado</span>':'')+'<br><span class="hint">'+l.length+' linhas · '+money(d)+(pend?' · '+pend+' sem categoria':'')+'</span></span></label>';
@@ -816,7 +895,7 @@ function loadFile(f){
     try{
       var wb=XLSX.read(new Uint8Array(rd.result),{type:'array',cellDates:true,bookVBA:false});
       if(isHist(wb)){
-        var now=new Date(),year=now.getFullYear(),parsed=parseHist(wb,year),names=MESES_FULL.filter(function(n){return parsed[n]}),on={};
+        var now=new Date(),year=Math.max(MIN_YEAR,now.getFullYear()),parsed=parseHist(wb,year),names=MESES_FULL.filter(function(n){return parsed[n]}),on={};
         names.forEach(function(n){on[n]=(MESES_FULL.indexOf(n)+1)<=now.getMonth()});
         S.imp={mode:'hist',wb:wb,name:f.name,hist:{year:year,parsed:parsed,names:names,on:on,curM:now.getMonth()+1,curY:now.getFullYear()}};
       }else{
@@ -922,7 +1001,7 @@ async function startApp(){
     var db=await Backend.db();
     S.db=db;
     var now=new Date().getFullYear();
-    [now,now-1,now-2].forEach(ensureYear);
+    [now,now-1].filter(function(y){return y>=MIN_YEAR}).forEach(ensureYear);
     ensureYear(S.ym.slice(0,4));
     db.doc('config/main').onSnapshot(function(s){
       if(!s.exists)return;
