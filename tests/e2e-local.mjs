@@ -3,7 +3,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { serve, check, section, finish, buildPlanilha, buildExtrato, dumpLocal, txOf, norm, OUT } from './helpers.mjs';
+import { serve, check, section, finish, buildPlanilha, buildExtrato, dumpLocal, txOf, norm, OUT, XLSX } from './helpers.mjs';
 
 const { srv, url } = await serve();
 const browser = await chromium.launch();
@@ -170,6 +170,9 @@ check(one('LOUCOS').status === 'ok' && one('LOUCOS').cat === 'Lanches / Junk foo
 check(by('CAFE').length === 2 && by('CAFE').every((t) => t.status === 'new'), 'duas compras idênticas no mesmo dia entram as duas');
 check(oct.every((t) => t.ym === '2026-10' && t.met === 'Cartão Credito'), 'competência = mês da fatura');
 check(Math.abs(oct.reduce((a, t) => a + t.amt, 0) - (512.4 + 41.9 + 905 + 330 + 25 + 35 + 12 + 12)) < 0.001, 'soma do extrato confere');
+check(one('MERCADO').card === 'Nicolas' && one('PAG*UBER').card === 'Ana Paula' && one('RACAO').card === 'Eduardo' && one('NOVO').card === 'Eduardo', 'cada lançamento do extrato guarda o cartão (titular do arquivo; EDUARDO SILVEIRA = Eduardo)', oct.map((t) => [t.desc, t.card]));
+check(oct.every((t) => ['Nicolas', 'Ana Paula', 'Eduardo'].includes(t.card)), 'nenhum lançamento do extrato ficou sem cartão');
+check(txOf(dump).filter((t) => t.src === 'planilha').every((t) => t.card === ''), 'lançamentos da planilha ficam sem cartão (a planilha não informa)');
 
 section('6. Reimportar o mesmo extrato');
 await tab(page, 'importar');
@@ -184,6 +187,9 @@ check(JSON.stringify(sts) === JSON.stringify([4, 1, 4]), 'fila: 4 novos, 1 a con
 check(await noOverflow(page), 'sem rolagem horizontal em Confirmar');
 await shot(page, '09-confirmar-claro');
 const card = (n) => page.locator('.qcard', { hasText: n });
+check(/Cartão Eduardo/.test(await card('NOVO FORNECEDOR XYZ').locator('.sub').innerText()), 'Confirmar mostra o cartão do lançamento (Eduardo)');
+check(/Cartão Nicolas/.test(await card('CAFE CENTRAL').locator('.sub').innerText()), 'Confirmar mostra o cartão do lançamento (Nicolas)');
+check(/cartão da casa/.test(await card('LOJA SEM CATEGORIA').locator('.sub').innerText()), 'sem cartão informado (planilha), mantém o texto "cartão da casa"');
 await card('NOVO FORNECEDOR XYZ').locator('[data-seg="Leite"]').click();
 await card('NOVO FORNECEDOR XYZ').locator('select[data-cat]').selectOption('Utensilios Fazenda Geral');
 await card('NOVO FORNECEDOR XYZ').locator('[data-ok]').click();
@@ -234,14 +240,29 @@ await tab(page, 'gastos');
 // o mês mostrado é o do último import (dezembro); navega até outubro
 for (let i = 0; i < 2; i++) await page.locator('#gMnav [data-mv="-1"]').click();
 check(/out 2026/i.test(await page.locator('#gMnav .m').innerText()), 'Gastos em outubro');
+const ctags = await page.locator('#gList .ctag').allTextContents();
+check(ctags.length === 8 && ctags.filter((x) => x === 'Cartão Eduardo').length === 2 && ctags.filter((x) => x === 'Cartão Nicolas').length === 5 && ctags.filter((x) => x === 'Cartão Ana Paula').length === 1, 'cada gasto de outubro mostra o cartão (5 Nicolas, 1 Ana Paula, 2 Eduardo)', ctags);
+await shot(page, '15-gastos-cartao');
+await page.fill('#q', 'eduardo');
+check(await page.locator('#gList .tx').count() === 2, 'buscar "eduardo" mostra só os gastos do cartão do Eduardo');
+await page.fill('#q', '');
 await page.fill('#q', 'mercado');
 const filtered = await page.locator('#gList .tx').count();
 check(filtered === 1, 'busca por "mercado" mostra 1 lançamento em outubro', filtered);
 await page.fill('#q', '');
-await page.locator('#gList .tx', { hasText: 'CAFE CENTRAL' }).first().click();
+const cafeRow = page.locator('#gList .tx', { hasText: 'CAFE CENTRAL' }).first();
+const cafeId = await cafeRow.getAttribute('data-id');
+await cafeRow.click();
 check(await page.locator('#sheet #eAll').count() === 1, 'folha de edição oferece "aplicar aos outros deste lugar"');
+check(await page.locator('#cChips [data-card="Nicolas"].on').count() === 1, 'folha de edição mostra o cartão atual (Nicolas)');
 await shot(page, '10-editar-claro');
-await page.locator('#eClose').click();
+await page.locator('#cChips [data-card="Ana Paula"]').click();
+await page.locator('#eAll').click();
+check(await page.locator('#eAll').isChecked(), 'marcou "aplicar aos outros deste lugar"');
+await page.locator('#eSave').click();
+await page.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+const cafes = txOf(await dumpLocal(page)).filter((x) => x.key === 'CAFE CENTRAL');
+check(cafes.length === 3 && cafes.find((x) => x.id === cafeId).card === 'Ana Paula' && cafes.filter((x) => x.id !== cafeId).every((x) => x.card === 'Nicolas'), 'trocar o cartão vale só para o lançamento aberto, mesmo aplicando a categoria aos outros do lugar', cafes.map((x) => [x.id, x.card]));
 
 await page.locator('#addBtn').click();
 await page.fill('#mV', '150.50');
@@ -252,6 +273,23 @@ await page.locator('#mSave').click();
 await page.waitForFunction(() => /Lançamento salvo/.test(document.querySelector('#toast').textContent));
 const manual = txOf(await dumpLocal(page)).find((t) => t.src === 'manual');
 check(manual && manual.amt === 150.5 && manual.ym === '2026-10' && manual.status === 'ok' && manual.cat === 'Diarista / Empregada', 'lançamento manual gravado', manual);
+check(manual.card === '' && manual.met === 'Debito/Pix', 'Pix/débito não pede cartão');
+
+await page.locator('#addBtn').click();
+await page.fill('#mV', '60'); await page.fill('#mN', 'Lanche no cartão');
+check(await page.locator('#sheet [data-k="cN"]').count() === 0, 'sem escolher "Cartão", não aparecem os cartões');
+await page.locator('#sheet [data-k="mC"]').click();
+check(await page.locator('#sheet [data-k="cN"], #sheet [data-k="cA"], #sheet [data-k="cE"]').count() === 3, 'escolher "Cartão" mostra Nicolas, Ana Paula e Eduardo');
+await shot(page, '16-manual-cartao');
+await page.locator('#sheet [data-seg="Ana Paula"]').click();
+await page.locator('#mC').selectOption('Lanches / Junk food');
+await page.locator('#mSave').click();
+check(/Escolha o cartão/.test(await page.locator('#toast').innerText()), 'com método Cartão, escolher o cartão é obrigatório');
+await page.locator('#sheet [data-k="cA"]').click();
+await page.locator('#mSave').click();
+await page.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+const manualCard = txOf(await dumpLocal(page)).find((x) => x.desc === 'Lanche no cartão');
+check(manualCard && manualCard.card === 'Ana Paula' && manualCard.met === 'Cartão Credito' && manualCard.amt === 60, 'lançamento manual no cartão grava o cartão escolhido', manualCard);
 
 section('9. Ajustes: titulares e categorias');
 await tab(page, 'ajustes');
@@ -275,6 +313,42 @@ section('9b. Selo flutuante do hospedeiro (Netlify) não cobre as abas');
   await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--badge-h') === '0px');
   check((await tabsHit(page)).every(Boolean), 'sem o selo, o espaço extra some');
 }
+
+section('9c. Extrato de um mês que a planilha já trouxe: preenche o cartão sem duplicar');
+const nBefore = txOf(await dumpLocal(page)).length;
+const extSet = buildExtrato('extrato-set.xlsx', [
+  ['05/09/2026', 'MERCADO EXTRA SALVADOR', 490, 'NICOLAS SANTOS'],
+  ['08/09/2026', 'PAG*UBER TRIP 123', 39, 'ANA PAULA'],
+  ['10/09/2026', 'POSTO IPIRANGA SALVADOR', 250, 'EDUARDO SILVEIRA'],
+]);
+await tab(page, 'importar');
+await page.setInputFiles('#file', extSet);
+await page.waitForSelector('[data-c="date"]');
+const goTxt = await page.locator('#iGo').innerText();
+check(/Atualizar o cartão de 3 lançamentos/.test(goTxt) && await page.locator('#iGo').isEnabled(), 'nada novo a importar, mas 3 lançamentos antigos ganham o cartão', goTxt);
+check(/3 ganham o cartão de origem/.test(await page.locator('#impBody').innerText()), 'a prévia explica o que vai acontecer');
+await page.locator('#iGo').click();
+await page.waitForSelector('#impBody .empty b');
+check(/0 lançamentos importados e 3 com o cartão preenchido/.test(await page.locator('#impBody').innerText()), 'resultado: 0 importados, 3 com o cartão preenchido', await page.locator('#impBody').innerText());
+const afterAll = txOf(await dumpLocal(page));
+check(afterAll.length === nBefore, 'nenhum lançamento duplicado', [nBefore, afterAll.length]);
+const sep = afterAll.filter((x) => x.ym === '2026-09' && x.src === 'planilha');
+const sp = (d) => sep.find((x) => x.desc.startsWith(d));
+check(sp('MERCADO').card === 'Nicolas' && sp('PAG*UBER').card === 'Ana Paula' && sp('POSTO').card === 'Eduardo', 'os 3 ganharam o cartão do extrato (Nicolas, Ana Paula, Eduardo)', sep.map((x) => [x.desc, x.card]));
+check(sp('MERCADO').seg === 'Nicolas & Ana Paula' && sp('PAG*UBER').seg === 'Nicolas' && sp('POSTO').seg === 'Combustivel' && sp('MERCADO').cat === 'Mercado' && sp('MERCADO').status === 'ok', 'a classificação da planilha foi preservada (só o cartão mudou)');
+check(sep.filter((x) => !x.card).length === sep.length - 3, 'os demais de setembro continuam sem cartão (não se adivinha)');
+await tab(page, 'importar');
+await page.setInputFiles('#file', extSet);
+await page.waitForSelector('[data-c="date"]');
+check(/Importar 0 lançamentos/.test(await page.locator('#iGo').innerText()) && await page.locator('#iGo').isDisabled(), 'reimportar de novo não faz mais nada');
+
+await tab(page, 'ajustes');
+const [xdl] = await Promise.all([page.waitForEvent('download'), page.locator('#exp').click()]);
+const xpath = path.join(OUT, 'export-teste.xlsx');
+await xdl.saveAs(xpath);
+const xrows = XLSX.utils.sheet_to_json(XLSX.read(fs.readFileSync(xpath), { type: 'buffer' }).Sheets['Lançamentos'], { header: 1 });
+check(xrows[0][xrows[0].length - 1] === 'Cartão', 'Excel exportado tem a coluna Cartão');
+check(xrows.some((r) => r[1] === 'MERCADO EXTRA SALVADOR' && r[r.length - 1] === 'Nicolas') && xrows.some((r) => r[1] === 'RACAO FAZENDA MIRANTE' && r[r.length - 1] === 'Eduardo'), 'e traz o cartão de cada lançamento');
 
 section('10. Sem erros no console');
 check(errors.length === 0, 'nenhum erro de JavaScript nem de console', errors);
