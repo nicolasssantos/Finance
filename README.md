@@ -44,7 +44,9 @@ O app está publicado no Netlify, em <https://casa-fazenda-saude-financeira.netl
 
 ## Uso mensal
 
-1. **Importar**: escolha o extrato do cartão (`.xlsx`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
+1. **Importar**: escolha o extrato do cartão (`.xlsx` ou `.xls`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
+   - **Fatura do Bradesco** (`.xls` do Internet Banking, com os 3 cartões no mesmo arquivo): o app lê uma seção por cartão, usa a coluna em R$, ignora o saldo anterior e o pagamento da fatura anterior, mantém estornos como crédito e dá o ano certo às parcelas antigas (o banco imprime só dia/mês). A prévia mostra se a soma lida confere com o "Total da fatura" do arquivo.
+   - **Ordem:** pode importar a planilha e o extrato em qualquer ordem. O gasto que já existe não é duplicado: o extrato preenche o cartão, e a planilha preenche a classificação que você já fez. O mais prático é importar a planilha primeiro, para o app já conhecer os seus lugares.
 2. **Confirmar**: o que o app não tem certeza aparece aqui. Laranja = sugestão para confirmar, amarelo = lugar novo. Depois de 2 confirmações iguais ele passa a classificar sozinho.
 3. **Resumo** e **Gastos**: para onde o dinheiro está indo, por casa x fazenda, responsável, categoria e mês. Cada gasto mostra de qual cartão saiu (Nicolas, Ana Paula ou Eduardo).
    - No **Resumo**, a chave **Mês | Ano** troca para o **histórico do ano**: escolha o ano (2026 em diante) e veja janeiro a dezembro num gráfico e numa tabela, com total, média mensal e saldo. Toque em um mês para abri-lo.

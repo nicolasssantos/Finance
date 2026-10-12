@@ -100,3 +100,47 @@ export async function dumpLocal(page) {
 }
 export const txOf = (dump) => Object.entries(dump).filter(([k]) => k.startsWith('tx_')).map(([, v]) => v);
 export const norm = (s) => String(s).replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+
+/* Fatura no formato do Bradesco Internet Banking (.xls binário): uma seção por cartão ("NOME - 12345"), datas dd/mm sem ano,
+   colunas Valor (US$) e Valor(R$), pagamento/saldo anterior no meio, totais por cartão e total da fatura.
+   Dados inventados; o arquivo real do usuário nunca entra no repositório. */
+const brl = (n) => n.toFixed(2).replace('.', ',');
+export function buildBradesco(name, sections, { totalOverride } = {}) {
+  const aoa = [[null], [null, null, 'Bradesco Internet Banking'], [null], [null], [null], [null], [null], ['Situação da Fatura: ABERTA'], ['']];
+  const expect = { sections: {}, total: 0, n: 0 };
+  for (const sec of sections) {
+    aoa.push([`${sec.name} - ${sec.digits}`]);
+    aoa.push(['Data', 'Histórico', '', 'Valor (US$)', 'Valor(R$)']);
+    let sum = 0, n = 0;
+    for (const [d, desc, brlv, usd = 0] of sec.rows) {
+      aoa.push([d, desc, '', brl(usd), brl(brlv)]);
+      if (!/SALDO ANTERIOR|^PAGTO/.test(desc)) { sum += brlv; n++; }
+    }
+    aoa.push([`Total para ${sec.name}`, null, null, null, brl(sum)]);
+    aoa.push(['']);
+    expect.sections[sec.name] = { n, sum: Math.round(sum * 100) / 100 };
+    expect.total += sum; expect.n += n;
+  }
+  expect.total = Math.round(expect.total * 100) / 100;
+  aoa.push(['Total da fatura em Real:', null, null, null, brl(totalOverride ?? expect.total)]);
+  aoa.push([''], ['* Fatura em Aberto: Valores sujeitos a alteração até o fechamento da fatura.'], [''],
+    ['Resumo das Despesas', 'Real'], ['Saldo Anterior', '1000,00'], ['(=)Total da fatura:', brl(expect.total)], ['Cotação do dólar utilizada:', '5,50']);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Sheet0');
+  const file = path.join(OUT, name);
+  fs.writeFileSync(file, XLSX.write(wb, { bookType: 'biff8', type: 'buffer' }));
+  return { file, expect };
+}
+
+/* Planilha mínima (só a aba Set) para testar a ordem de importação */
+export function buildPlanilhaSet(name, rows) {
+  const wb = XLSX.utils.book_new();
+  ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'].forEach((n) => {
+    const sheet = [['Data', 'Lugar', 'Valor', 'Responsável', 'Despesas', 'Método', 'Entrada vs Saída']];
+    if (n === 'Set') rows.forEach((r) => sheet.push(r));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet), n);
+  });
+  const file = path.join(OUT, name);
+  fs.writeFileSync(file, XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' }));
+  return file;
+}

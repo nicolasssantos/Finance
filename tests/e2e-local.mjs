@@ -3,16 +3,16 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { serve, check, section, finish, buildPlanilha, buildExtrato, dumpLocal, txOf, norm, OUT, XLSX } from './helpers.mjs';
+import { serve, check, section, finish, buildPlanilha, buildExtrato, buildBradesco, buildPlanilhaSet, dumpLocal, txOf, norm, OUT, XLSX } from './helpers.mjs';
 
 const { srv, url } = await serve();
 const browser = await chromium.launch();
 const NOW = new Date('2026-10-12T15:00:00Z');
 const errors = [];
 
-async function newPage(scheme = 'light', ctxOpts = {}) {
+async function newPage(scheme = 'light', ctxOpts = {}, now = NOW) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: scheme, serviceWorkers: 'block', acceptDownloads: true, ...ctxOpts });
-  await ctx.clock.setFixedTime(NOW);
+  await ctx.clock.setFixedTime(now);
   await ctx.addInitScript(() => { window.APP_CONFIG = { firebase: null }; }); // força o modo local, mesmo com config.js apontando para a nuvem
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
   const page = await ctx.newPage();
@@ -376,11 +376,11 @@ await tab(page, 'importar');
 await page.setInputFiles('#file', extSet);
 await page.waitForSelector('[data-c="date"]');
 const goTxt = await page.locator('#iGo').innerText();
-check(/Atualizar o cartão de 3 lançamentos/.test(goTxt) && await page.locator('#iGo').isEnabled(), 'nada novo a importar, mas 3 lançamentos antigos ganham o cartão', goTxt);
-check(/3 ganham o cartão de origem/.test(await page.locator('#impBody').innerText()), 'a prévia explica o que vai acontecer');
+check(/Atualizar 3 lançamentos já importados/.test(goTxt) && await page.locator('#iGo').isEnabled(), 'nada novo a importar, mas 3 lançamentos antigos ganham o cartão', goTxt);
+check(/3 ganham dados novos/.test(await page.locator('#impBody').innerText()), 'a prévia explica o que vai acontecer');
 await page.locator('#iGo').click();
 await page.waitForSelector('#impBody .empty b');
-check(/0 lançamentos importados e 3 com o cartão preenchido/.test(await page.locator('#impBody').innerText()), 'resultado: 0 importados, 3 com o cartão preenchido', await page.locator('#impBody').innerText());
+check(/0 lançamentos importados e 3 atualizados/.test(await page.locator('#impBody').innerText()), 'resultado: 0 importados, 3 atualizados', await page.locator('#impBody').innerText());
 const afterAll = txOf(await dumpLocal(page));
 check(afterAll.length === nBefore, 'nenhum lançamento duplicado', [nBefore, afterAll.length]);
 const sep = afterAll.filter((x) => x.ym === '2026-09' && x.src === 'planilha');
@@ -400,6 +400,121 @@ await xdl.saveAs(xpath);
 const xrows = XLSX.utils.sheet_to_json(XLSX.read(fs.readFileSync(xpath), { type: 'buffer' }).Sheets['Lançamentos'], { header: 1 });
 check(xrows[0][xrows[0].length - 1] === 'Cartão', 'Excel exportado tem a coluna Cartão');
 check(xrows.some((r) => r[1] === 'MERCADO EXTRA SALVADOR' && r[r.length - 1] === 'Nicolas') && xrows.some((r) => r[1] === 'RACAO FAZENDA MIRANTE' && r[r.length - 1] === 'Eduardo'), 'e traz o cartão de cada lançamento');
+
+section('9d. Fatura do Bradesco (.xls): seções por cartão, datas sem ano, R$, parcelas e pagamento');
+const BR_SEC = [
+  { name: 'NICOLAS DE TESTE SANTO', digits: '10001', rows: [
+    ['20/09', 'MERCADO TESTE', 100], ['19/09', 'PADARIA TESTE', 20.5], ['15/09', 'UBER *TRIP 1', 30],
+    ['01/09', 'SALDO ANTERIOR', 5000], ['01/09', 'PAGTO. POR DEB EM C/C', -5000],
+    ['23/09', 'MAQUINA TESTE 12/12', 200], ['24/11', 'LIVRARIA TESTE 10/12', 50], ['09/02', 'CELULAR TESTE 8/12', 150],
+    ['10/09', 'HOTEL EXTERIOR', 110, 20]] },
+  { name: 'ANA PAULA TESTE S', digits: '10002', rows: [['18/09', 'FARMACIA TESTE', 45.9], ['12/09', 'MERCADO TESTE', 80.1]] },
+  { name: 'EDUARDO X SILVEIRA', digits: '10003', rows: [['17/09', 'RACAO TESTE', 900], ['16/09', 'LOJA AGRO TESTE 1/10', 188.93], ['02/09', 'MERCADOLIVRE*TESTE', -60]] },
+];
+const bra = buildBradesco('bradesco-teste.xls', BR_SEC);
+const brm = (n) => norm(new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n));
+const bctx = await newPage('light');
+const bp = bctx.page;
+await bp.goto(url + '/index.html');
+await bp.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+await tab(bp, 'importar');
+await bp.setInputFiles('#file', bra.file);
+await bp.waitForSelector('[data-c="date"]');
+const bcols = await bp.evaluate(() => ['date', 'desc', 'amt', 'holder'].map((k) => { const s = document.querySelector(`[data-c="${k}"]`); return s.options[s.selectedIndex].textContent; }));
+check(JSON.stringify(bcols) === JSON.stringify(['Data', 'Histórico', 'Valor(R$)', 'Titular (seção do arquivo)']), 'colunas: usa Valor(R$) (não a de US$) e o titular vem da seção de cada cartão', bcols);
+check((await bp.locator('#iFat').inputValue()) === '2026-09', 'mês da fatura = setembro (as parcelas antigas de novembro/setembro de 2025 não puxam para outro mês)');
+const bh = await bp.locator('[data-h]').evaluateAll((els) => els.map((e) => e.value));
+check(JSON.stringify(bh) === JSON.stringify(['Nicolas', 'Ana Paula', 'Fazenda']), 'os 3 cartões já vêm associados (Nicolas, Ana Paula, Fazenda)', bh);
+const btxt = norm(await bp.locator('#impBody').innerText());
+check(/ano mais recente até 20\/09\/2026/.test(btxt), 'explica como tratou as datas sem ano');
+check(/2 pagamentos de fatura ignorados/.test(btxt), 'ignora o saldo anterior e o pagamento da fatura anterior');
+check(new RegExp(`soma lida \\(${brm(bra.expect.total).replace(/[$]/g, '\\$')}\\) confere com o total da fatura`).test(btxt), `soma lida confere com o total da fatura (${brm(bra.expect.total)})`, btxt.match(/soma lida[^.]*\./g));
+check(new RegExp(`Importar ${bra.expect.n} lançamentos`).test(await bp.locator('#iGo').innerText()), `${bra.expect.n} lançamentos na prévia`);
+const bfit = await bp.locator('#impBody .tbl').evaluateAll((els) => els.map((e) => [e.scrollWidth, e.clientWidth]));
+check(bfit.length === 1 && bfit.every(([sw, cw]) => sw <= cw), 'a tabela da prévia mostra a coluna Responsável sem rolar para o lado', bfit);
+await shot(bp, '19-importar-bradesco');
+await bp.locator('#iGo').click();
+await bp.waitForSelector('#impBody .empty b');
+const btx = txOf(await dumpLocal(bp));
+const byCard = {};
+btx.forEach((x) => { (byCard[x.card] ||= { n: 0, s: 0 }); byCard[x.card].n++; byCard[x.card].s += x.amt; });
+const cardOfSec = { 'NICOLAS DE TESTE SANTO': 'Nicolas', 'ANA PAULA TESTE S': 'Ana Paula', 'EDUARDO X SILVEIRA': 'Eduardo' };
+const okByCard = Object.entries(bra.expect.sections).every(([nm, e]) => byCard[cardOfSec[nm]] && byCard[cardOfSec[nm]].n === e.n && Math.abs(byCard[cardOfSec[nm]].s - e.sum) < 0.005);
+check(okByCard, 'cada cartão tem a quantidade e a soma do "Total para…" do arquivo', { byCard, expect: bra.expect.sections });
+const bd = (d) => btx.find((x) => x.desc.startsWith(d));
+check(bd('MAQUINA').d === '2025-09-23' && bd('LIVRARIA').d === '2025-11-24' && bd('CELULAR').d === '2026-02-09', 'parcelas antigas ficam no ano anterior (23/09 e 24/11 → 2025; 09/02 → 2026)', [bd('MAQUINA').d, bd('LIVRARIA').d, bd('CELULAR').d]);
+check(bd('MERCADO TESTE').d === '2026-09-20' || btx.some((x) => x.desc === 'MERCADO TESTE' && x.d === '2026-09-20'), 'compras do ciclo ficam em 2026');
+check(btx.every((x) => x.ym === '2026-09' && x.met === 'Cartão Credito'), 'todos entram no mês da fatura (setembro)');
+check(bd('HOTEL').amt === 110, 'compra no exterior usa o valor em reais, não o em US$');
+const credit = btx.find((x) => x.desc.startsWith('MERCADOLIVRE'));
+check(credit && credit.amt === -60 && credit.card === 'Eduardo', 'estorno de loja fica como crédito (-R$ 60,00) no cartão certo', credit);
+check(!btx.some((x) => /SALDO ANTERIOR|PAGTO/.test(x.desc)), 'saldo anterior e pagamento não viram gasto');
+check(btx.every((x) => x.card), 'todo lançamento tem cartão');
+await tab(bp, 'importar');
+await bp.setInputFiles('#file', bra.file);
+await bp.waitForSelector('[data-c="date"]');
+check(/Importar 0 lançamentos/.test(await bp.locator('#iGo').innerText()) && await bp.locator('#iGo').isDisabled(), 'reimportar a mesma fatura não duplica');
+// total do arquivo diferente da soma lida: avisa
+const brBad = buildBradesco('bradesco-total-errado.xls', BR_SEC, { totalOverride: bra.expect.total + 10 });
+await bp.setInputFiles('#file', brBad.file);
+await bp.waitForSelector('[data-c="date"]');
+check(/difere do total da fatura/.test(await bp.locator('#impBody .warn').innerText()), 'se a soma lida não bate com o total do arquivo, avisa');
+await bctx.ctx.close();
+
+section('9e. Ordem de importação: planilha e extrato se completam (nas duas ordens)');
+const setRows = [
+  ['20/09', 'MERCADO TESTE', 100, 'Nicolas & Ana Paula', 'Mercado', 'Cartão Credito', 'Despesa'],
+  ['19/09', 'PADARIA TESTE', 20.5, 'Nicolas', 'Padaria', 'Cartão Credito', 'Despesa'],
+];
+const plSet = buildPlanilhaSet('planilha-set.xlsx', setRows);
+const importFile = async (pg, file, wait) => { await tab(pg, 'importar'); await pg.setInputFiles('#file', file); await pg.waitForSelector(wait); };
+const goAndWait = async (pg) => { await pg.locator('#iGo').click(); await pg.waitForSelector('#impBody .empty b'); };
+{ // A: planilha primeiro, depois o extrato
+  const c = await newPage('light'); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await importFile(pg, plSet, '#hYear');
+  await pg.locator('[data-hn="Set"]').check().catch(() => {});
+  await goAndWait(pg);
+  await importFile(pg, bra.file, '[data-c="date"]');
+  const lbl = await pg.locator('#iGo').innerText();
+  check(new RegExp(`Importar ${bra.expect.n - 2} lançamentos e atualizar 2 já importados`).test(lbl), 'planilha → extrato: 2 já existem e ganham o cartão; o resto entra', lbl);
+  await goAndWait(pg);
+  const all = txOf(await dumpLocal(pg));
+  const m = all.find((x) => x.desc === 'MERCADO TESTE' && x.amt === 100);
+  check(all.length === bra.expect.n && m.src === 'planilha' && m.card === 'Nicolas' && m.seg === 'Nicolas & Ana Paula' && m.cat === 'Mercado' && m.status === 'ok', 'a classificação da planilha foi mantida e o cartão preenchido; nada duplicado', { n: all.length, m });
+  await c.ctx.close();
+}
+{ // B: extrato primeiro, depois a planilha
+  const c = await newPage('light'); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await importFile(pg, bra.file, '[data-c="date"]'); await goAndWait(pg);
+  await importFile(pg, plSet, '#hYear');
+  await pg.locator('[data-hn="Set"]').check().catch(() => {});
+  const lbl = await pg.locator('#iGo').innerText();
+  check(/Atualizar 2 lançamentos já importados/.test(lbl), 'extrato → planilha: as 2 linhas da planilha completam o que já entrou, em vez de serem descartadas', lbl);
+  await goAndWait(pg);
+  const all = txOf(await dumpLocal(pg));
+  const m = all.find((x) => x.desc === 'MERCADO TESTE' && x.amt === 100), pd = all.find((x) => x.desc === 'PADARIA TESTE');
+  check(all.length === bra.expect.n && m.src === 'extrato' && m.status === 'ok' && m.seg === 'Nicolas & Ana Paula' && m.cat === 'Mercado' && m.card === 'Nicolas' && pd.cat === 'Padaria' && pd.seg === 'Nicolas', 'a classificação que você fez na planilha chega nos lançamentos do extrato; cartão preservado', { n: all.length, m, pd });
+  await c.ctx.close();
+}
+
+section('9f. Fatura de janeiro com compras de dezembro (virada de ano)');
+{
+  const jan = buildBradesco('bradesco-janeiro.xls', [{ name: 'NICOLAS DE TESTE SANTO', digits: '10001', rows: [
+    ['28/12', 'LOJA TESTE', 80], ['05/01', 'MERCADO TESTE', 40], ['03/05', 'CURSO TESTE 2/6', 90], ['10/01', 'FARMACIA TESTE', 25]] }]);
+  const c = await newPage('light', {}, new Date('2027-01-12T15:00:00Z')); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await importFile(pg, jan.file, '[data-c="date"]');
+  check((await pg.locator('#iFat').inputValue()) === '2027-01', 'fatura de janeiro de 2027 (uma só seção, "NOME - 10001")');
+  check(/confere com o total da fatura/.test(await pg.locator('#impBody').innerText()), 'soma confere');
+  await goAndWait(pg);
+  const j = txOf(await dumpLocal(pg));
+  const d = (n) => j.find((x) => x.desc.startsWith(n)).d;
+  check(d('LOJA') === '2026-12-28' && d('MERCADO') === '2027-01-05' && d('CURSO') === '2026-05-03' && d('FARMACIA') === '2027-01-10', 'dezembro e a parcela antiga ficam em 2026; janeiro em 2027', j.map((x) => [x.desc, x.d]));
+  check(j.every((x) => x.ym === '2027-01' && x.card === 'Nicolas'), 'todos em jan/2027, no cartão do Nicolas');
+  await c.ctx.close();
+}
 
 section('10. Sem erros no console');
 check(errors.length === 0, 'nenhum erro de JavaScript nem de console', errors);
