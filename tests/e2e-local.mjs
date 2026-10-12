@@ -13,6 +13,7 @@ const errors = [];
 async function newPage(scheme = 'light', ctxOpts = {}) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: scheme, serviceWorkers: 'block', acceptDownloads: true, ...ctxOpts });
   await ctx.clock.setFixedTime(NOW);
+  await ctx.addInitScript(() => { window.APP_CONFIG = { firebase: null }; }); // força o modo local, mesmo com config.js apontando para a nuvem
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -259,6 +260,7 @@ await ctx.close();
 section('11. Instalável e abre sem internet (service worker)');
 {
   const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await c.addInitScript(() => { window.APP_CONFIG = { firebase: null }; });
   await c.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
   const p = await c.newPage();
   await p.goto(url + '/index.html');
