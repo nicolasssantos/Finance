@@ -3,7 +3,8 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { serve, check, section, finish, buildPlanilha, buildExtrato, buildBradesco, buildPlanilhaSet, dumpLocal, txOf, norm, OUT, XLSX } from './helpers.mjs';
+import { serve, check, section, finish, buildPlanilha, buildExtrato, buildBradesco, buildPlanilhaSet, dumpLocal, txOf, norm, OUT, XLSX, htmlToPdf, bradescoHtml, expectOf, imageOnlyPdf, encryptPdf } from './helpers.mjs';
+import { spawnSync } from 'node:child_process';
 
 const { srv, url } = await serve();
 const browser = await chromium.launch();
@@ -572,6 +573,111 @@ section('9g. O app pergunta para qual mês é o extrato');
   await tab(pg, 'importar'); await pg.setInputFiles('#file', plSet); await pg.waitForSelector('#hYear');
   check(await pg.locator('#mCard').count() === 0 && await pg.locator('#iGo').isEnabled(), 'planilha de histórico não pergunta o mês (cada aba já é um mês)');
   await c.ctx.close();
+}
+
+section('9h. Extrato em PDF');
+{
+  const pdfText = (f) => { const r = spawnSync('pdftotext', ['-layout', f, '-'], { encoding: 'utf8' }); return r.status === 0 ? r.stdout : null; };
+  const openPdf = async (file, wait = '#mCard') => {
+    const c = await newPage('light'); const pg = c.page;
+    await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+    await tab(pg, 'importar'); await pg.setInputFiles('#file', file); await pg.waitForSelector(wait, { timeout: 40000 });
+    return c;
+  };
+  check((await page.locator('#file').getAttribute('accept')).includes('.pdf'), 'o seletor de arquivo aceita PDF');
+
+  // 1) layout do Bradesco com colunas estreitas: descrições quebram em duas e três linhas (data e valor ficam no meio)
+  const wrapSec = BR_SEC.map((s) => ({ ...s, rows: [...s.rows] }));
+  wrapSec[0].rows.push(['20/09', 'LOJA COM NOME MUITO LONGO 1/6', 77.7]);
+  const g1 = bradescoHtml(wrapSec, { descWidth: 130 });
+  const pdf1 = await htmlToPdf(browser, g1.html, path.join(OUT, 'bradesco-teste.pdf'));
+  const txt1 = pdfText(pdf1);
+  if (txt1) check(/LOJA COM\s*\n/.test(txt1) && /\n\s*LONGO 1\/6/.test(txt1) && /\n\s*SALDO\s*\n/.test(txt1), 'precondição: no PDF as descrições realmente quebram em várias linhas (inclusive SALDO / ANTERIOR)');
+  const c1 = await openPdf(pdf1); const p1 = c1.page;
+  const t1 = norm(await p1.locator('#impBody').innerText());
+  check(new RegExp(`reconheci ${g1.expect.lines} lançamentos`).test(t1), `PDF do Bradesco: ${g1.expect.lines} linhas reconhecidas (compras, saldo anterior e pagamento)`, t1.match(/reconheci[^.]*/));
+  check(JSON.stringify(await p1.locator('[data-h]').evaluateAll((els) => els.map((e) => e.value))) === JSON.stringify(['Nicolas', 'Ana Paula', 'Fazenda']), 'PDF: os 3 cartões vêm da seção de cada um');
+  check(/confere com o total da fatura/.test(t1) && /2 pagamentos de fatura ignorados/.test(t1), 'PDF: soma confere com o total da fatura; saldo e pagamento ignorados');
+  check(await p1.locator('#iSheet, [data-c="date"]').count() === 0, 'PDF: não mostra a caixa de colunas do Excel');
+  await shot(p1, '22-importar-pdf');
+  await pickMonth(p1);
+  check(new RegExp(`Importar ${g1.expect.n} lançamentos`).test(await p1.locator('#iGo').innerText()), `PDF: ${g1.expect.n} lançamentos na prévia`);
+  await goAndWait(p1);
+  const x1 = txOf(await dumpLocal(p1));
+  const by1 = {}; x1.forEach((x) => { (by1[x.card] ||= { n: 0, s: 0 }); by1[x.card].n++; by1[x.card].s += x.amt; });
+  const okCards = Object.entries(g1.expect.sections).every(([nm, e]) => by1[cardOfSec[nm]] && by1[cardOfSec[nm]].n === e.n && Math.abs(by1[cardOfSec[nm]].s - e.sum) < 0.005);
+  check(okCards, 'PDF: cada cartão com a quantidade e a soma do "Total para…"', { by1, e: g1.expect.sections });
+  const w1 = x1.find((x) => x.desc.startsWith('LOJA COM NOME'));
+  check(w1 && w1.desc === 'LOJA COM NOME MUITO LONGO 1/6' && w1.amt === 77.7 && w1.d === '2026-09-20', 'PDF: descrição quebrada em três linhas foi remontada, com o valor e a data certos', w1);
+  const d1 = (n) => x1.find((x) => x.desc.startsWith(n));
+  check(d1('MAQUINA').d === '2025-09-23' && d1('LIVRARIA').d === '2025-11-24' && d1('CELULAR').d === '2026-02-09' && d1('HOTEL').amt === 110 && x1.some((x) => x.amt === -60 && x.card === 'Eduardo'), 'PDF: parcelas antigas no ano certo, valor em reais (não US$) e estorno como crédito');
+  await c1.ctx.close();
+
+  // 1b) marcador de parcela (n/m) que cai na linha de baixo, com a data e o valor no topo da célula
+  const topSec = [{ name: 'NICOLAS DE TESTE SANTO', digits: '10001', rows: [['20/09', 'MERCADO TESTE', 100], ['24/11', 'MERCADOLIVRE*MERCADOLI 10/12', 358.68]] }];
+  const g1b = bradescoHtml(topSec, { descWidth: 110, valign: 'top' });
+  const pdf1b = await htmlToPdf(browser, g1b.html, path.join(OUT, 'bradesco-marcador.pdf'));
+  const txt1b = pdfText(pdf1b);
+  if (txt1b) check(/\n\s*10\/12\s*\n/.test(txt1b), 'precondição: o marcador 10/12 realmente caiu em outra linha');
+  const c1b = await openPdf(pdf1b); await pickMonth(c1b.page); await goAndWait(c1b.page);
+  const x1b = txOf(await dumpLocal(c1b.page)).find((x) => x.desc.startsWith('MERCADOLIVRE'));
+  check(x1b && x1b.desc === 'MERCADOLIVRE*MERCADOLI 10/12' && x1b.amt === 358.68 && x1b.d === '2025-11-24', 'PDF: marcador de parcela na linha de baixo volta para a descrição', x1b);
+  await c1b.ctx.close();
+
+  // 2) várias páginas, com o cabeçalho repetido em cada uma
+  const bigSec = [{ name: 'NICOLAS DE TESTE SANTO', digits: '10001', rows: Array.from({ length: 110 }, (_, i) => [`${String(1 + (i % 20)).padStart(2, '0')}/09`, `LOJA TESTE ${String.fromCharCode(65 + (i % 26))}${i}`, 10 + i]) }];
+  const g2 = bradescoHtml(bigSec);
+  const pdf2 = await htmlToPdf(browser, g2.html, path.join(OUT, 'bradesco-grande.pdf'));
+  const c2 = await openPdf(pdf2); const p2 = c2.page;
+  const t2 = norm(await p2.locator('#impBody').innerText());
+  const pages2 = +(t2.match(/Li (\d+) páginas/) || [])[1];
+  check(pages2 >= 2 && new RegExp(`reconheci ${g2.expect.lines} lançamentos`).test(t2), `PDF de ${pages2} páginas: as ${g2.expect.lines} linhas foram lidas, apesar do cabeçalho repetido`, t2.match(/Li [^.]*/));
+  check(/confere com o total da fatura/.test(t2), 'PDF de várias páginas: soma confere com o total');
+  await c2.ctx.close();
+
+  // 3) estilo "15 SET", valores "R$ 123,45", créditos de várias formas, sem seção de cartão
+  const row = (d, n, v) => `<div style="display:flex;gap:20px;margin:3px 0"><span style="width:60px">${d}</span><span style="width:230px">${n}</span><span style="width:110px;text-align:right">${v}</span></div>`;
+  const nuHtml = `<html><body style="font-family:Arial;font-size:10pt"><h3>Fatura de setembro</h3><p>Total a pagar R$ 1.234,56</p><div>Transações</div>${row('15 SET', 'Mercado Extra', 'R$ 123,45')}${row('16 SET', 'Uber *Trip', 'R$ 30,00')}${row('17 SET', 'Padaria Central', 'R$ 20,50')}${row('18 SET', 'Estorno Loja', '-R$ 25,00')}${row('19 SET', 'Desconto promocional', '10,00-')}${row('20 SET', 'Cashback', '12,50 CR')}</body></html>`;
+  const pdf3 = await htmlToPdf(browser, nuHtml, path.join(OUT, 'fatura-simples.pdf'));
+  const c3 = await openPdf(pdf3); const p3 = c3.page;
+  check(/reconheci 6 lançamentos/.test(norm(await p3.locator('#impBody').innerText())) && await p3.locator('#iFixed').count() === 1, 'PDF simples ("15 SET", R$): 6 lançamentos e pergunta de quem é o cartão');
+  await pickMonth(p3);
+  check(await p3.locator('#iGo').isDisabled(), 'sem dizer de quem é o cartão, o botão fica travado');
+  await p3.locator('#iFixed').selectOption('Ana Paula');
+  check(/Importar 6 lançamentos/.test(await p3.locator('#iGo').innerText()), 'depois de escolher o cartão, libera a importação');
+  await goAndWait(p3);
+  const x3 = txOf(await dumpLocal(p3));
+  const am = (n) => x3.find((x) => x.desc.startsWith(n)).amt;
+  check(x3.length === 6 && x3.every((x) => x.card === 'Ana Paula' && x.ym === '2026-09') && am('Mercado') === 123.45 && am('Estorno') === -25 && am('Desconto') === -10 && am('Cashback') === -12.5, 'PDF simples: valores, créditos (-R$, 10,00-, 12,50 CR) e cartão escolhido', x3.map((x) => [x.desc, x.amt]));
+  await c3.ctx.close();
+
+  // 4) PDF escaneado (só imagem)
+  const c4 = await openPdf(await imageOnlyPdf(browser, path.join(OUT, 'escaneado.pdf')), '#impBody .warn'); const p4 = c4.page;
+  check(/não tem texto para ler/.test(await p4.locator('#impBody .warn').innerText()) && await p4.locator('#mCard').count() === 0, 'PDF escaneado: explica que não há texto e sugere Excel/CSV');
+  await c4.ctx.close();
+
+  // 5) PDF protegido por senha
+  const pdfEnc = path.join(OUT, 'bradesco-senha.pdf');
+  if (encryptPdf(pdf1, pdfEnc, 'abc123')) {
+    const c5 = await openPdf(pdfEnc, '#pdfPwd'); const p5 = c5.page;
+    check(/protegido por senha/.test(await p5.locator('#sheet').innerText()), 'PDF com senha: pede a senha');
+    await p5.locator('#pdfPwd').fill('errada'); await p5.locator('#pdfOk').click();
+    await p5.waitForFunction(() => /Senha incorreta/.test((document.querySelector('#sheet') || {}).innerText || ''), null, { timeout: 30000 });
+    check(true, 'senha errada: avisa e pede de novo');
+    await p5.locator('#pdfPwd').fill('abc123'); await p5.locator('#pdfOk').click();
+    await p5.waitForSelector('#mCard', { timeout: 40000 });
+    check(new RegExp(`reconheci ${g1.expect.lines} lançamentos`).test(norm(await p5.locator('#impBody').innerText())), 'senha certa: lê o PDF normalmente');
+    await c5.ctx.close();
+  } else console.log('  (pulado) PDF com senha: pypdf não disponível');
+
+  // 6) PDF com texto mas sem lançamentos; 7) arquivo corrompido
+  const c6 = await openPdf(await htmlToPdf(browser, '<html><body><h3>Comprovante de pagamento</h3><p>Pagamento realizado com sucesso</p><p>Valor total R$ 100,00</p></body></html>', path.join(OUT, 'sem-lancamentos.pdf')), '#impBody .warn');
+  check(/Não encontrei lançamentos/.test(await c6.page.locator('#impBody .warn').innerText()) && await c6.page.locator('#impBody details').count() === 1, 'PDF sem lançamentos: avisa e deixa ver o que o app leu');
+  await c6.ctx.close();
+  fs.writeFileSync(path.join(OUT, 'corrompido.pdf'), '%PDF-1.4\nisto não é um pdf de verdade');
+  const c7 = await openPdf(path.join(OUT, 'corrompido.pdf'), '#impBody .warn');
+  check(/Não consegui abrir este PDF/.test(await c7.page.locator('#impBody .warn').innerText()), 'PDF corrompido: mensagem clara, sem travar');
+  await c7.ctx.close();
 }
 
 section('10. Sem erros no console');

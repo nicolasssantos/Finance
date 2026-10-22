@@ -189,10 +189,10 @@ svg text{fill:var(--muted);font-family:var(--font)}
     </section>
     <section class="view" id="v-importar">
       <div class="card">
-        <h3>Arquivo Excel</h3>
-        <p class="hint" style="margin:0 0 12px">Serve para dois arquivos: a sua planilha de controle (Janeiro a Dezembro), para trazer o histórico, e o extrato mensal do cartão. O app reconhece qual é.</p>
+        <h3>Arquivo do banco (Excel ou PDF)</h3>
+        <p class="hint" style="margin:0 0 12px">Serve para dois arquivos: a sua planilha de controle (Janeiro a Dezembro), para trazer o histórico, e o extrato mensal do cartão (Excel, CSV ou PDF). O app reconhece qual é.</p>
         <label class="btn" for="file" style="display:flex;justify-content:center;cursor:pointer">Escolher arquivo</label>
-        <input type="file" id="file" accept=".xlsx,.xlsm,.xls,.csv" style="position:absolute;opacity:0;width:1px;height:1px">
+        <input type="file" id="file" accept=".xlsx,.xlsm,.xls,.csv,.pdf,application/pdf" style="position:absolute;opacity:0;width:1px;height:1px">
       </div>
       <div id="impBody" style="display:flex;flex-direction:column;gap:14px"></div>
     </section>
@@ -888,11 +888,11 @@ function renderImport(){
   buildPreview();
   var pv=I.preview,c=I.cols,opts=function(sel,none){return '<option value="-1">'+none+'</option>'+I.headers.map(function(h,i){return '<option value="'+i+'"'+(sel===i?' selected':'')+'>'+esc(h)+'</option>'}).join('')};
   var hopt=function(v){return '<option value="">Escolha…</option>'+['Nicolas','Ana Paula','Fazenda'].map(function(x){return '<option'+(v===x?' selected':'')+'>'+x+'</option>'}).join('')};
-  var h=monthCard(I)+'<div class="card"><h3>Extrato do cartão · colunas</h3><div class="grid2">';
-  if(I.wb.SheetNames.length>1)h+='<label class="f">Planilha<select id="iSheet">'+I.wb.SheetNames.map(function(n){return '<option'+(n===I.sheet?' selected':'')+'>'+esc(n)+'</option>'}).join('')+'</select></label>';
-  h+='<label class="f">Data<select data-c="date">'+opts(c.date,'—')+'</select></label><label class="f">Lugar<select data-c="desc">'+opts(c.desc,'—')+'</select></label><label class="f">Valor<select data-c="amt">'+opts(c.amt,'—')+'</select></label><label class="f">Titular do cartão<select data-c="holder">'+opts(c.holder,'Sem coluna de titular')+'</select></label>';
-  if(c.holder<0)h+='<label class="f">Este arquivo é do cartão de<select id="iFixed">'+hopt(I.fixed)+'</select></label>';
-  h+='</div></div>';
+  var h=monthCard(I)+(I.pdf?pdfCard(I,hopt):'<div class="card"><h3>Extrato do cartão · colunas</h3><div class="grid2">');
+  if(!I.pdf&&I.wb.SheetNames.length>1)h+='<label class="f">Planilha<select id="iSheet">'+I.wb.SheetNames.map(function(n){return '<option'+(n===I.sheet?' selected':'')+'>'+esc(n)+'</option>'}).join('')+'</select></label>';
+  if(!I.pdf)h+='<label class="f">Data<select data-c="date">'+opts(c.date,'—')+'</select></label><label class="f">Lugar<select data-c="desc">'+opts(c.desc,'—')+'</select></label><label class="f">Valor<select data-c="amt">'+opts(c.amt,'—')+'</select></label><label class="f">Titular do cartão<select data-c="holder">'+opts(c.holder,'Sem coluna de titular')+'</select></label>';
+  if(!I.pdf&&c.holder<0)h+='<label class="f">Este arquivo é do cartão de<select id="iFixed">'+hopt(I.fixed)+'</select></label>';
+  if(!I.pdf)h+='</div></div>';
   var hk=Object.keys(I.holderMap);
   if(c.holder>=0&&hk.length)h+='<div class="card"><h3>Titulares</h3><div class="rows">'+hk.map(function(k,i){return '<div class="hrow"><span style="overflow-wrap:anywhere">'+esc(k)+'</span><select data-h="'+i+'">'+hopt(I.holderMap[k])+'</select><span></span></div>'}).join('')+'</div><p class="hint" style="margin:10px 0 0">Fazenda: o app pergunta o responsável (Leite, Granja, Peixe…). Nicolas e Ana Paula: já entram com esse responsável.</p></div>';
   h+='<div class="card"><h3>Datas e valores</h3>';
@@ -975,11 +975,163 @@ function runImport(preview){
     render();
   },function(e){I.busy=false;toast('Falha ao importar ('+(e&&e.code||'erro')+'). O que já foi gravado fica salvo; importe de novo para completar.');render()});
 }
+/* ---- extrato em PDF: o texto do PDF vira a mesma tabela que o Excel gera, e o resto do fluxo é o mesmo ---- */
+var pdfLibP=null;
+function loadPdfLib(){
+  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+  if(pdfLibP)return pdfLibP;
+  pdfLibP=new Promise(function(res,rej){
+    var sc=document.createElement('script');sc.src='vendor/pdf.min.js';
+    sc.onload=function(){window.pdfjsLib.GlobalWorkerOptions.workerSrc='vendor/pdf.worker.min.js';res(window.pdfjsLib)};
+    sc.onerror=function(){pdfLibP=null;rej(new Error('Não consegui carregar o leitor de PDF. Confira a internet e tente de novo.'))};
+    document.head.appendChild(sc);
+  });
+  return pdfLibP;
+}
+function isPdfBytes(b){return b.length>4&&b[0]===0x25&&b[1]===0x50&&b[2]===0x44&&b[3]===0x46}
+/* junta os pedaços de texto de uma página em linhas (mesma altura), da esquerda para a direita; guarda a posição vertical */
+function pdfPageLines(items,pageIdx){
+  var its=[];
+  items.forEach(function(it){
+    if(!it.str||!it.str.trim())return;
+    its.push({s:it.str,x:it.transform[4],y:it.transform[5],w:it.width||0,h:Math.abs(it.transform[3])||it.height||10});
+  });
+  its.sort(function(a,b){return b.y-a.y||a.x-b.x});
+  var lines=[],cur=null;
+  its.forEach(function(it){
+    if(cur&&Math.abs(it.y-cur.y)<=Math.max(2,cur.h*0.45))cur.items.push(it);
+    else{cur={y:it.y,h:it.h,items:[it]};lines.push(cur)}
+  });
+  return lines.map(function(l){
+    l.items.sort(function(a,b){return a.x-b.x});
+    var t='',end=null;
+    l.items.forEach(function(it){if(end!=null&&it.x-end>l.h*0.15)t+=' ';t+=it.s;end=it.x+it.w});
+    /* pos: cresce para baixo, contínuo entre páginas (cada página é bem distante da anterior) */
+    return {t:t.replace(/ /g,' ').replace(/\s+/g,' ').trim(),pos:pageIdx*100000-l.y,h:l.h};
+  });
+}
+function readPdf(bytes,password){
+  return loadPdfLib().then(function(lib){
+    /* isEvalSupported:false: o leitor não executa código vindo do PDF */
+    return lib.getDocument({data:bytes.slice(),password:password||undefined,isEvalSupported:false}).promise.then(function(doc){
+      var all=[],items=0,chain=Promise.resolve();
+      for(var p=1;p<=doc.numPages;p++)(function(p){
+        chain=chain.then(function(){return doc.getPage(p)}).then(function(pg){return pg.getTextContent()}).then(function(tc){items+=tc.items.length;all=all.concat(pdfPageLines(tc.items,p))});
+      })(p);
+      return chain.then(function(){return {lines:all,items:items,pages:doc.numPages}});
+    });
+  });
+}
+var PDF_MON={JAN:1,FEV:2,MAR:3,ABR:4,MAI:5,JUN:6,JUL:7,AGO:8,SET:9,OUT:10,NOV:11,DEZ:12};
+var PDF_AMT='-?(?:\\d{1,3}(?:\\.\\d{3})+|\\d+),\\d{2}';   // 1.234,56 | 1234,56 | -12,00
+/* uma linha de lançamento: data no início (dd/mm, dd/mm/aaaa ou "15 SET"), descrição, e o valor no fim (1.234,56 | -12,00 | 12,00- | 12,00 CR).
+   A descrição pode vir vazia quando ela quebrou em outras linhas (resolvido em pdfToTable). */
+function parsePdfLine(t,hasUsd){
+  var m=t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s+(.+)$/),date,rest;
+  if(m){date=pad(m[1])+'/'+pad(m[2])+(m[3]?'/'+m[3]:'');rest=m[4]}
+  else{
+    var mm=t.match(/^(\d{1,2})\s+(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\.?\s+(.+)$/i);
+    if(!mm)return null;
+    date=pad(mm[1])+'/'+pad(PDF_MON[mm[2].toUpperCase()]);rest=mm[3];
+  }
+  /* sinal: -R$ 25,00 | R$ -25,00 | -25,00 | 25,00- | 25,00 CR. Um traço solto ("LOJA - 25,00") é separador, não sinal */
+  var amts=[],amRe=new RegExp('(?:^|\\s)(-?)(?:R\\$\\s*)?('+PDF_AMT+')(-|\\s?CR)?\\s*$','i');
+  for(var k=0;k<2;k++){
+    var am=rest.match(amRe);
+    if(!am)break;
+    amts.unshift({v:am[2],mark:am[3]||'',sign:am[1]});
+    rest=rest.slice(0,am.index).replace(/\s+-\s*$/,'').trim();
+  }
+  if(!amts.length)return null;
+  rest=rest.replace(/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s+/,'').trim();   // segunda data (lançamento) colada na descrição
+  /* dois valores: com coluna de dólar o último é o em reais; sem ela, usa o primeiro (o segundo costuma ser saldo) */
+  var two=amts.length===2&&!hasUsd,pick=two?amts[0]:amts[amts.length-1];
+  var neg=pick.sign==='-'||/^-/.test(pick.v)||/-/.test(pick.mark)||/CR/i.test(pick.mark);
+  return {date:date,desc:/[A-Za-zÀ-ÿ]/.test(rest)?rest:'',amt:(neg?'-':'')+pick.v.replace(/^-/,''),two:two};
+}
+/* pedaço de descrição que quebrou em outra linha: só texto, sem valor, sem cara de título/cabeçalho/total */
+function pdfFragment(t){
+  return t.length<=40&&(/[A-Za-zÀ-ÿ]/.test(t)||/^\d{1,2}\/\d{1,2}$/.test(t))&&!/\d,\d{2}\b/.test(t)
+    &&!/^(Data\b|Hist[óo]rico|Valor\b|Total (para|da)\b|Situa[çc][ãa]o|Resumo das|P[áa]gina \d|Bradesco Internet|Pagamento m[ií]nimo)/i.test(t)&&!/\s-\s*\d{3,}$/.test(t)&&!/^\d{1,2}\/\d{1,2}\s/.test(t);
+}
+function pdfToTable(lines){
+  var hasUsd=lines.some(function(l){return /US\$|USD|D[ÓO]LAR/i.test(l.t)});
+  var P=lines.map(function(l){return parsePdfLine(l.t,hasUsd)}),frag=[];
+  var near=function(i,j){return lines[j]&&Math.abs(lines[j].pos-lines[i].pos)<=Math.max(lines[i].h,lines[j].h)*2.2};
+  var free=function(i,j){return near(i,j)&&!P[j]&&!frag[j]&&pdfFragment(lines[j].t)};
+  var tight=function(i,j){return Math.abs(lines[j].pos-lines[i].pos)<=Math.max(lines[i].h,lines[j].h)*1.4};
+  lines.forEach(function(l,i){
+    if(!P[i])return;
+    if(!P[i].desc){  // descrição quebrada em duas linhas, acima e abaixo da linha da data e do valor
+      var d='';
+      if(free(i,i-1)){d=lines[i-1].t;frag[i-1]=true}
+      if(free(i,i+1)){d=(d?d+' ':'')+lines[i+1].t;frag[i+1]=true}
+      P[i].desc=d;
+    }else if(free(i,i-1)&&free(i,i+1)&&tight(i,i-1)&&tight(i,i+1)){   // descrição em 3 linhas: texto acima e abaixo, bem junto da linha da data
+      P[i].desc=lines[i-1].t+' '+P[i].desc+' '+lines[i+1].t;frag[i-1]=frag[i+1]=true;
+    }else if(free(i,i+1)&&/^\d{1,2}\/\d{1,2}$/.test(lines[i+1].t)){   // marcador de parcela (n/m) que caiu na linha de baixo
+      P[i].desc+=' '+lines[i+1].t;frag[i+1]=true;
+    }
+  });
+  var HDR=['Data','Histórico','Valor(R$)'],rows=[],pending=null,started=false,n=0,two=0,miss=[],sample=[],total=false;
+  lines.forEach(function(l,i){
+    var t=l.t,tx=P[i];
+    if(frag[i])return;
+    if(tx&&tx.desc){
+      if(pending!=null){rows.push([pending]);rows.push(HDR.slice());pending=null;started=true}
+      else if(!started){rows.push(HDR.slice());started=true}
+      rows.push([tx.date,tx.desc,tx.amt]);n++;if(tx.two)two++;if(sample.length<8)sample.push(t);
+      return;
+    }
+    if(tx){if(miss.length<10)miss.push(t);return}   // data e valor, mas nenhuma descrição encontrada
+    /* título de seção por cartão: "NOME - 56266" */
+    var lab=t.match(/^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'’]+?)\s+-\s*(\d{3,})$/);
+    if(lab&&!/^TOTAL/i.test(t)){pending=lab[1].trim()+' - '+lab[2];return}
+    var tt=t.match(new RegExp('^Total da fatura[^\\d-]*('+PDF_AMT+')\\s*$','i'));
+    if(tt&&!total){total=true;rows.push(['Total da fatura',null,tt[1]]);return}
+    if(/\d,\d{2}\s*(CR|-)?$/.test(t)&&miss.length<10&&!/^(\([-+=]\)|Total|Pagamento M|Saldo|Limite|Taxa|Resumo|Cota|Despesas)/i.test(t))miss.push(t);
+  });
+  return {rows:rows,n:n,two:two,sample:sample,miss:miss,hasUsd:hasUsd};
+}
+function showPdfError(msg,lines){
+  S.imp=null;
+  var det=lines&&lines.length?'<details style="margin-top:8px"><summary class="hint">Ver o que o app leu do PDF</summary><div class="hint" style="margin-top:6px;overflow-wrap:anywhere">'+lines.slice(0,25).map(function(l){return esc(l.t)}).join('<br>')+'</div></details>':'';
+  $('#impBody').innerHTML='<div class="warn">'+esc(msg)+det+'</div>';
+}
+function askPdfPassword(f,bytes,wrong){
+  openSheet('<h2>PDF protegido por senha</h2><p class="hint" style="margin:0">'+(wrong?'<b>Senha incorreta.</b> ':'')+'Digite a senha para abrir este PDF. Ela fica só no seu aparelho.</p><input type="password" id="pdfPwd" autocomplete="off" aria-label="Senha do PDF"><div class="btnrow"><button class="btn" id="pdfOk">Abrir</button><button class="btn ghost" id="pdfNo">Cancelar</button></div>');
+  $('#pdfPwd').focus();
+  $('#pdfNo').onclick=function(){closeSheet();$('#impBody').innerHTML=''};
+  $('#pdfOk').onclick=function(){var v=$('#pdfPwd').value;if(!v)return;closeSheet();$('#impBody').innerHTML='<div class="card"><p class="hint" style="margin:0">Lendo o PDF…</p></div>';loadPdf(f,bytes,v)};
+}
+function loadPdf(f,bytes,password){
+  readPdf(bytes,password).then(function(r){
+    if(!r.items){showPdfError('Este PDF não tem texto para ler (parece uma imagem escaneada). Baixe o extrato em Excel (.xls ou .xlsx) ou CSV no site do banco, ou use um PDF com texto selecionável.');return}
+    var t=pdfToTable(r.lines);
+    if(!t.n){showPdfError('Não encontrei lançamentos neste PDF. O app lê PDFs em que cada compra tem data, descrição e valor na mesma linha. Se o seu banco oferece o extrato em Excel, prefira ele.',r.lines);return}
+    var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(t.rows),'PDF');
+    S.imp={mode:'fatura',wb:wb,sheet:'PDF',name:f.name,pdf:{pages:r.pages,n:t.n,two:t.two,sample:t.sample,miss:t.miss}};
+    readSheet();renderImport();
+  },function(e){
+    if(e&&e.name==='PasswordException'){askPdfPassword(f,bytes,e.code===2);return}
+    showPdfError(e&&/carregar o leitor/.test(e.message||'')?e.message:'Não consegui abrir este PDF. Ele pode estar corrompido ou não ser um PDF de verdade.');
+  });
+}
+function pdfCard(I,hopt){
+  var p=I.pdf;
+  var h='<div class="card"><h3>Extrato em PDF</h3><p class="hint" style="margin:0 0 10px">Li '+p.pages+' '+(p.pages===1?'página':'páginas')+' e reconheci <b>'+p.n+' lançamentos</b> (data, descrição e valor na mesma linha).'+(p.two?' Em '+p.two+' linhas havia dois valores; usei o primeiro.':'')+'</p>';
+  if(I.cols.holder<0)h+='<label class="f">Este PDF é do cartão de<select id="iFixed">'+hopt(I.fixed)+'</select></label>';
+  if(p.miss.length)h+='<div class="warn" style="margin-top:10px">Encontrei '+p.miss.length+(p.miss.length===1?' linha com valor que não consegui entender':' linhas com valor que não consegui entender')+'. Confira se faltou algum lançamento.<details style="margin-top:6px"><summary>Ver linhas</summary><div style="margin-top:6px;overflow-wrap:anywhere">'+p.miss.map(esc).join('<br>')+'</div></details></div>';
+  h+='<details style="margin-top:10px"><summary class="hint">Ver exemplos do que li</summary><div class="hint" style="margin-top:6px;overflow-wrap:anywhere">'+p.sample.map(esc).join('<br>')+'</div></details></div>';
+  return h;
+}
 function loadFile(f){
   var rd=new FileReader();
   rd.onload=function(){
+    var bytes=new Uint8Array(rd.result);
+    if(isPdfBytes(bytes)){loadPdf(f,bytes);return}
     try{
-      var wb=XLSX.read(new Uint8Array(rd.result),{type:'array',cellDates:true,bookVBA:false});
+      var wb=XLSX.read(bytes,{type:'array',cellDates:true,bookVBA:false});
       if(isHist(wb)){
         var now=new Date(),year=Math.max(MIN_YEAR,now.getFullYear()),parsed=parseHist(wb,year),names=MESES_FULL.filter(function(n){return parsed[n]}),on={};
         names.forEach(function(n){on[n]=(MESES_FULL.indexOf(n)+1)<=now.getMonth()});
@@ -988,7 +1140,7 @@ function loadFile(f){
         S.imp={mode:'fatura',wb:wb,sheet:wb.SheetNames[0],name:f.name};readSheet();
       }
       renderImport();
-    }catch(e){S.imp=null;$('#impBody').innerHTML='<div class="warn">Não consegui abrir este arquivo. Confira se é um Excel (.xlsx, .xlsm) ou .csv.</div>'}
+    }catch(e){S.imp=null;$('#impBody').innerHTML='<div class="warn">Não consegui abrir este arquivo. Confira se é um Excel (.xlsx, .xlsm, .xls), um .csv ou um PDF com texto.</div>'}
   };
   rd.readAsArrayBuffer(f);
 }

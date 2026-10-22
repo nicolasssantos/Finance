@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -143,4 +144,55 @@ export function buildPlanilhaSet(name, rows) {
   const file = path.join(OUT, name);
   fs.writeFileSync(file, XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' }));
   return file;
+}
+
+/* ---------- PDF ---------- */
+export async function htmlToPdf(browser, html, file) {
+  const p = await browser.newPage();
+  await p.setContent(html);
+  await p.pdf({ path: file, format: 'A4', margin: { top: '15mm', bottom: '15mm', left: '12mm', right: '12mm' } });
+  await p.close();
+  return file;
+}
+
+/* soma e quantidade esperadas de cada seção (sem saldo anterior e pagamento), como o app deve calcular */
+export function expectOf(sections) {
+  const expect = { sections: {}, total: 0, n: 0, lines: 0 };
+  for (const sec of sections) {
+    let sum = 0, n = 0;
+    for (const [, desc, brlv] of sec.rows) { expect.lines++; if (!/SALDO ANTERIOR|^PAGTO/.test(desc)) { sum += brlv; n++; } }
+    expect.sections[sec.name] = { n, sum: Math.round(sum * 100) / 100 };
+    expect.total += sum; expect.n += n;
+  }
+  expect.total = Math.round(expect.total * 100) / 100;
+  return expect;
+}
+
+/* fatura no layout do Bradesco, em HTML (vira PDF com texto). descWidth estreito quebra descrições longas em duas linhas. */
+export function bradescoHtml(sections, { totalOverride, valign = 'middle', descWidth = 260 } = {}) {
+  const e = expectOf(sections);
+  let h = `<html><body style="font-family:Arial;font-size:9pt"><style>td{vertical-align:${valign}}</style><h2>Bradesco Internet Banking</h2><p>Situação da Fatura: ABERTA</p>`;
+  for (const sec of sections) {
+    h += `<h4>${sec.name} - ${sec.digits}</h4><table><thead><tr><th>Data</th><th>Histórico</th><th>Valor (US$)</th><th>Valor(R$)</th></tr></thead><tbody>`;
+    for (const [d, desc, brlv, usd = 0] of sec.rows)
+      h += `<tr><td style="width:60px">${d}</td><td style="width:${descWidth}px">${desc}</td><td style="width:70px;text-align:right">${brl(usd)}</td><td style="width:80px;text-align:right">${brl(brlv)}</td></tr>`;
+    h += `</tbody></table><p style="margin:2px 0"><b>Total para ${sec.name}</b> &nbsp; ${brl(e.sections[sec.name].sum)}</p>`;
+  }
+  h += `<p><b>Total da fatura em Real:</b> &nbsp; ${brl(totalOverride ?? e.total)}</p><p>* Fatura em Aberto: Valores sujeitos a alteração até o fechamento da fatura.</p>`;
+  h += `<p>Resumo das Despesas &nbsp; Real</p><p>Saldo Anterior &nbsp; 1000,00</p><p>(=)Total da fatura: &nbsp; ${brl(e.total)}</p><p>Cotação do dólar utilizada: &nbsp; 5,50</p></body></html>`;
+  return { html: h, expect: e };
+}
+
+/* PDF só com imagem (sem texto selecionável), como um extrato escaneado */
+export async function imageOnlyPdf(browser, file) {
+  const shot = await browser.newPage({ viewport: { width: 500, height: 120 } });
+  await shot.setContent('<body style="margin:0;font:bold 28px Arial">20/09 MERCADO TESTE 100,00<br>19/09 PADARIA TESTE 20,50</body>');
+  const png = (await shot.screenshot()).toString('base64');
+  await shot.close();
+  return htmlToPdf(browser, `<html><body><img src="data:image/png;base64,${png}"></body></html>`, file);
+}
+
+export function encryptPdf(inFile, outFile, password) {
+  const r = spawnSync('python3', ['-I', path.join(ROOT, 'tests', 'encrypt_pdf.py'), inFile, outFile, password], { encoding: 'utf8' });
+  return r.status === 0;
 }

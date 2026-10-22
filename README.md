@@ -44,7 +44,8 @@ O app está publicado no Netlify, em <https://casa-fazenda-saude-financeira.netl
 
 ## Uso mensal
 
-1. **Importar**: escolha o extrato do cartão (`.xlsx` ou `.xls`). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
+1. **Importar**: escolha o extrato do cartão (`.xlsx`, `.xls`, `.csv` ou **`.pdf`**). O app detecta as colunas (Data, Descrição, Valor, Titular) e lembra a escolha para o mês seguinte.
+   - **PDF:** o app lê PDFs com texto (não escaneados) em que cada compra tem data, descrição e valor na mesma linha, em qualquer ordem de colunas: `20/09`, `20/09/2026` ou `15 SET`; valores como `1.234,56`, `R$ 25,00`, `-25,00`, `25,00-` ou `25,00 CR` (crédito). Reconhece seções por cartão (`NOME - 56266`), o total da fatura (para conferir a soma), descrições que quebram em várias linhas e PDFs com várias páginas ou protegidos por senha (a senha fica só no aparelho). PDF escaneado (imagem) não tem texto para ler: use o Excel ou o CSV. O leitor (pdf.js, da Mozilla) só é carregado quando você escolhe um PDF.
    - **Mês do extrato:** ao escolher o arquivo, o app pergunta **"Para qual mês é este extrato?"**. Ele sugere o mês pela última compra do arquivo e oferece o mês anterior e o seguinte (ou qualquer outro, ou "usar o mês de cada compra"). O botão de importar só libera depois da sua resposta. O mês escolhido define para onde os lançamentos vão; o ano das datas vem do próprio arquivo.
    - **Fatura do Bradesco** (`.xls` do Internet Banking, com os 3 cartões no mesmo arquivo): o app lê uma seção por cartão, usa a coluna em R$, ignora o saldo anterior e o pagamento da fatura anterior, mantém estornos como crédito e dá o ano certo às parcelas antigas (o banco imprime só dia/mês). A prévia mostra se a soma lida confere com o "Total da fatura" do arquivo.
    - **Ordem:** pode importar a planilha e o extrato em qualquer ordem. O gasto que já existe não é duplicado: o extrato preenche o cartão, e a planilha preenche a classificação que você já fez. O mais prático é importar a planilha primeiro, para o app já conhecer os seus lugares.
@@ -62,7 +63,7 @@ config.js           onde você cola a configuração do Firebase
 sw.js, manifest…    instalar na tela inicial e abrir sem internet
 firestore.rules     regras: cada usuário só acessa a própria área
 firebase.json       hospedagem e emuladores
-vendor/             SheetJS e Firebase SDK, versionados para funcionar offline
+vendor/             SheetJS, Firebase SDK e pdf.js (leitor de PDF), versionados no repositório
 tests/              testes de ponta a ponta no navegador
 docs/briefing.md    regras de negócio e histórico
 ```
