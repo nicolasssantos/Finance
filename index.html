@@ -378,26 +378,34 @@ function saveCfg(){
   return retry(function(){return S.db.doc('config/main').set({holders:S.cfg.holders,cats:S.cfg.cats,map:S.cfg.map||null})});
 }
 function h53(str){var h1=0xdeadbeef,h2=0x41c6ce57;for(var i=0,ch;i<str.length;i++){ch=str.charCodeAt(i);h1=Math.imul(h1^ch,2654435761);h2=Math.imul(h2^ch,1597334677)}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return 4294967296*(2097151&h2)+(h1>>>0)}
+/* nomes que são o mesmo lugar, um truncado pelo banco ("MATERIAL CONS" no PDF, "MATERIAL CONSTR" no Excel) */
+function keyCompat(a,b){
+  if(a===b)return true;
+  var x=a.replace(/\s/g,''),y=b.replace(/\s/g,'');
+  return Math.min(x.length,y.length)>=6&&(x.indexOf(y)===0||y.indexOf(x)===0);
+}
 /* remove duplicados já gravados (mesmo mês, data, valor e lugar) e cria o id estável */
 function finalize(cands){
-  var ex={},exTx={};allTx().forEach(function(t){if(t.sig){ex[t.sig]=(ex[t.sig]||0)+1;(exTx[t.sig]=exTx[t.sig]||[]).push(t)}});
+  var baseOf=function(sig){var p=sig.split('|');return [p[0],p[1],p[2],p[4]].join('|')};
+  var byBase={};allTx().forEach(function(t){if(t.sig){var b=baseOf(t.sig);(byBase[b]=byBase[b]||[]).push(t)}});
   var seen={},out=[],dup=0,enrich=[],used={};
   cands.forEach(function(c){
     var sig=c.ym+'|'+(c.nd?'nd':c.d)+'|'+c.amt.toFixed(2)+'|'+c.key+'|'+c.tipo;
     seen[sig]=(seen[sig]||0)+1;
-    if((ex[sig]||0)>=seen[sig]){
-      dup++;
-      /* o mesmo gasto já existe: em vez de descartar, completa o que faltar nele, em qualquer ordem de importação.
+    var okc=c.status==='ok'&&c.seg&&c.cat;
+    var needs=function(t){return (c.card&&!t.card)||(okc&&t.status!=='ok')};
+    var pool=(byBase[baseOf(sig)]||[]).filter(function(t){return !used[t.id]}).sort(function(a,b){return a.id<b.id?-1:1});
+    /* o mesmo gasto já existe: prefere o de nome igual e, entre eles, o que ainda precisa de dados */
+    var exact=pool.filter(function(t){return t.key===c.key}),near=pool.filter(function(t){return t.key!==c.key&&keyCompat(t.key,c.key)});
+    var hit=exact.filter(needs)[0]||exact[0]||near.filter(needs)[0]||near[0];
+    if(hit){
+      dup++;used[hit.id]=1;
+      /* em vez de descartar, completa o que faltar nele, em qualquer ordem de importação.
          O extrato sabe o cartão; a planilha traz a classificação confirmada por você. */
-      var okc=c.status==='ok'&&c.seg&&c.cat;
-      var cur=exTx[sig].filter(function(t){return !used[t.id]&&((c.card&&!t.card)||(okc&&t.status!=='ok'))}).sort(function(a,b){return a.id<b.id?-1:1})[0];
-      if(cur){
-        used[cur.id]=1;
-        var patch={};
-        if(c.card&&!cur.card)patch.card=c.card;
-        if(okc&&cur.status!=='ok')Object.assign(patch,{seg:c.seg,cat:c.cat,grp:grpOfResp(c.seg)||c.grp,status:'ok',auto:!!c.auto});
-        enrich.push(Object.assign({},cur,patch));
-      }
+      var patch={};
+      if(c.card&&!hit.card)patch.card=c.card;
+      if(okc&&hit.status!=='ok')Object.assign(patch,{seg:c.seg,cat:c.cat,grp:grpOfResp(c.seg)||c.grp,status:'ok',auto:!!c.auto});
+      if(Object.keys(patch).length)enrich.push(Object.assign({},hit,patch));
       return;
     }
     c.sig=sig;c.id='i'+h53(sig+'#'+seen[sig]).toString(36);out.push(c);
@@ -1007,7 +1015,7 @@ function pdfPageLines(items,pageIdx){
     var t='',end=null;
     l.items.forEach(function(it){if(end!=null&&it.x-end>l.h*0.15)t+=' ';t+=it.s;end=it.x+it.w});
     /* pos: cresce para baixo, contínuo entre páginas (cada página é bem distante da anterior) */
-    return {t:t.replace(/ /g,' ').replace(/\s+/g,' ').trim(),pos:pageIdx*100000-l.y,h:l.h};
+    return {t:t.replace(/ /g,' ').replace(/\s+/g,' ').trim(),pos:pageIdx*100000-l.y,h:l.h,cells:l.items};
   });
 }
 function readPdf(bytes,password){
@@ -1035,7 +1043,7 @@ function parsePdfLine(t,hasUsd){
     date=pad(mm[1])+'/'+pad(PDF_MON[mm[2].toUpperCase()]);rest=mm[3];
   }
   /* sinal: -R$ 25,00 | R$ -25,00 | -25,00 | 25,00- | 25,00 CR. Um traço solto ("LOJA - 25,00") é separador, não sinal */
-  var amts=[],amRe=new RegExp('(?:^|\\s)(-?)(?:R\\$\\s*)?('+PDF_AMT+')(-|\\s?CR)?\\s*$','i');
+  var amts=[],amRe=new RegExp('(?:^|\\s)(-?)(?:R\\$\\s*)?('+PDF_AMT+')(\\s?-|\\s?CR)?\\s*$','i');
   for(var k=0;k<2;k++){
     var am=rest.match(amRe);
     if(!am)break;
@@ -1054,7 +1062,7 @@ function pdfFragment(t){
   return t.length<=40&&(/[A-Za-zÀ-ÿ]/.test(t)||/^\d{1,2}\/\d{1,2}$/.test(t))&&!/\d,\d{2}\b/.test(t)
     &&!/^(Data\b|Hist[óo]rico|Valor\b|Total (para|da)\b|Situa[çc][ãa]o|Resumo das|P[áa]gina \d|Bradesco Internet|Pagamento m[ií]nimo)/i.test(t)&&!/\s-\s*\d{3,}$/.test(t)&&!/^\d{1,2}\/\d{1,2}\s/.test(t);
 }
-function pdfToTable(lines){
+function pdfToTableText(lines){
   var hasUsd=lines.some(function(l){return /US\$|USD|D[ÓO]LAR/i.test(l.t)});
   var P=lines.map(function(l){return parsePdfLine(l.t,hasUsd)}),frag=[];
   var near=function(i,j){return lines[j]&&Math.abs(lines[j].pos-lines[i].pos)<=Math.max(lines[i].h,lines[j].h)*2.2};
@@ -1092,6 +1100,68 @@ function pdfToTable(lines){
     if(/\d,\d{2}\s*(CR|-)?$/.test(t)&&miss.length<10&&!/^(\([-+=]\)|Total|Pagamento M|Saldo|Limite|Taxa|Resumo|Cota|Despesas)/i.test(t))miss.push(t);
   });
   return {rows:rows,n:n,two:two,sample:sample,miss:miss,hasUsd:hasUsd};
+}
+/* ---- modo por colunas: faturas com cabeçalho "Data | Histórico | Cidade | US$ | R$" (Bradesco) ----
+   Usa a posição de cada coluna do cabeçalho: só lê a tabela (ignora a barra lateral que fica na mesma altura), descarta a coluna Cidade
+   e separa a parcela colada na descrição ("CONS09/10"). Valores com sinal solto ("60,00" + "-") são créditos. */
+function pdfHeader(l){
+  var d=null,h=null,c=null,u=null,r=null;
+  l.cells.forEach(function(it){
+    var s=it.s.trim();
+    if(/^Data$/i.test(s))d=it.x;
+    else if(/^(Hist[óo]rico|Descri[çc][ãa]o|Lan[çc]amentos)/i.test(s))h=it.x;
+    else if(/^Cidade$/i.test(s))c=it.x;
+    else if(/^US\$$/.test(s))u=it.x;
+    else if(/^R\$$/.test(s))r=it.x;
+  });
+  return d!=null&&h!=null&&r!=null?{d:d,h:h,c:c,u:u,r:r}:null;
+}
+function pdfJoin(cells,h){
+  var t='',end=null;
+  cells.forEach(function(it){if(end!=null&&it.x-end>h*0.15)t+=' ';t+=it.s;end=it.x+it.w});
+  return t.replace(/\s+/g,' ').trim();
+}
+function pdfToTableCols(lines,cols,first){
+  var HDR=['Data','Histórico','Valor(R$)'],rows=[],pending=null,started=false,n=0,miss=[],sample=[],total=false;
+  var amtRe=new RegExp('^(-?)\\s*(?:R\\$\\s*)?('+PDF_AMT+')(\\s?-|\\s?CR)?$','i');
+  var labRe=/^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'’]+?)\s+Cart[ãa]o\s+\d{4}\s+X+\s+(\d{4,5})$/i;
+  for(var i=first+1;i<lines.length;i++){
+    var l=lines[i],hc=pdfHeader(l);
+    if(hc){cols=hc;continue}
+    var cells=l.cells.filter(function(c){return c.x<cols.r+24});   // à direita fica a barra lateral (limites, taxas, pontos), que começa em ~r+29; os valores e o sinal solto ficam até ~r+15
+    if(!cells.length)continue;
+    var text=pdfJoin(cells,l.h);
+    var lab=text.match(labRe);
+    if(lab&&!/^N[úu]mero/i.test(lab[1])){pending=lab[1].trim()+' - '+lab[2];continue}
+    var tt=text.match(new RegExp('^Total da fatura[^\\d-]*('+PDF_AMT+')\\s*$','i'));
+    if(tt&&!total){total=true;rows.push(['Total da fatura',null,tt[1]]);continue}
+    var amtStart=cols.u!=null?(cols.u+cols.r)/2:cols.r-45;
+    var descEnd=cols.c!=null?cols.c-3:(cols.u!=null?cols.u-3:amtStart);
+    var date=[],desc=[],amt=[];
+    cells.forEach(function(it){
+      var mg=it.x<cols.h-2&&it.s.match(/^(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s+(\S.*)$/);   // PDFs gerados pelo navegador fundem data e descrição
+      if(mg){date.push({s:mg[1],x:it.x,w:0});desc.push({s:mg[2],x:cols.h,w:it.w});return}
+      if(it.x<cols.h-2)date.push(it);
+      else if(it.x<descEnd)desc.push(it);
+      else if(it.x>=amtStart)amt.push(it);      // o que está entre a descrição e o valor (cidade, dólar) não entra
+    });
+    var d=pdfJoin(date,l.h);
+    if(!/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(d))continue;   // continuação da cidade, título, total etc.
+    var ds=pdfJoin(desc,l.h).replace(/([^\s\d])(\d{2}\/\d{2})$/,'$1 $2'),am=pdfJoin(amt,l.h).match(amtRe);
+    if(!am||!ds){if(miss.length<10)miss.push(text);continue}
+    var neg=am[1]==='-'||/^-/.test(am[2])||/-/.test(am[3]||'')||/CR/i.test(am[3]||'');
+    if(pending!=null){rows.push([pending]);rows.push(HDR.slice());pending=null;started=true}
+    else if(!started){rows.push(HDR.slice());started=true}
+    rows.push([d,ds,(neg?'-':'')+am[2].replace(/^-/,'')]);n++;if(sample.length<8)sample.push(d+' '+ds+' '+am[2]+(neg?' -':''));
+  }
+  return {rows:rows,n:n,two:0,sample:sample,miss:miss,hasUsd:cols.u!=null};
+}
+function pdfToTable(lines){
+  for(var i=0;i<lines.length;i++){
+    var hc=pdfHeader(lines[i]);
+    if(hc){var t=pdfToTableCols(lines,hc,i);if(t.n)return t;break}   // cabeçalho achado mas nada lido: tenta o leitor por linhas
+  }
+  return pdfToTableText(lines);
 }
 function showPdfError(msg,lines){
   S.imp=null;

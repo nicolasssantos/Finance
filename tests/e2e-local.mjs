@@ -3,7 +3,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
-import { serve, check, section, finish, buildPlanilha, buildExtrato, buildBradesco, buildPlanilhaSet, dumpLocal, txOf, norm, OUT, XLSX, htmlToPdf, bradescoHtml, expectOf, imageOnlyPdf, encryptPdf } from './helpers.mjs';
+import { serve, check, section, finish, buildPlanilha, buildExtrato, buildBradesco, buildPlanilhaSet, dumpLocal, txOf, norm, OUT, XLSX, htmlToPdf, bradescoHtml, expectOf, imageOnlyPdf, encryptPdf, faturaColsHtml, faturaColsPdf, faturaExpect } from './helpers.mjs';
 import { spawnSync } from 'node:child_process';
 
 const { srv, url } = await serve();
@@ -678,6 +678,64 @@ section('9h. Extrato em PDF');
   const c7 = await openPdf(path.join(OUT, 'corrompido.pdf'), '#impBody .warn');
   check(/Não consegui abrir este PDF/.test(await c7.page.locator('#impBody .warn').innerText()), 'PDF corrompido: mensagem clara, sem travar');
   await c7.ctx.close();
+}
+
+section('9i. Fatura oficial do Bradesco em PDF (colunas, barra lateral, cidade, parcela colada, crédito)');
+{
+  const fat = faturaColsPdf(path.join(OUT, 'fatura-oficial-teste.pdf'));
+  const g = { expect: fat.expect }, pdf = fat.file;
+  const r = spawnSync('pdftotext', ['-layout', pdf, '-'], { encoding: 'utf8' });
+  if (r.status === 0) check(/MATERIAL DE CONS09\/10.*Compras R\$ 60\.428,11/.test(r.stdout) && /PADARIA TESTE.*Saldo de pontos/.test(r.stdout), 'precondição: no PDF a barra lateral está na mesma linha dos lançamentos');
+  const c = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(pg, 'importar'); await pg.setInputFiles('#file', pdf); await pg.waitForSelector('#mCard', { timeout: 40000 });
+  const tx = norm(await pg.locator('#impBody').innerText());
+  check(new RegExp(`Li 3 páginas e reconheci ${g.expect.lines} lançamentos`).test(tx), `fatura oficial: ${g.expect.lines} linhas reconhecidas (compras mais o pagamento), em 3 páginas com o cabeçalho só na primeira`, tx.match(/Li [^.]*/));
+  check(/Sugestão pela última compra do arquivo: Outubro 2026/.test(tx), 'sugere outubro de 2026 (a última compra é de 19/10)');
+  check(JSON.stringify(await pg.locator('[data-h]').evaluateAll((els) => els.map((e) => e.value))) === JSON.stringify(['Nicolas', 'Ana Paula', 'Fazenda']), 'títulos "NOME  Cartão 3747 XXXXXX nnnnn": os 3 cartões associados (nome completo ou truncado)');
+  check(/confere com o total da fatura/.test(tx) && /1 pagamentos de fatura ignorados/.test(tx) && !/não consegui entender/.test(tx), 'soma confere com "Total da fatura em real"; pagamento ignorado; nenhuma linha perdida');
+  await shot(pg, '23-fatura-oficial-pdf');
+  await pickMonth(pg);
+  await goAndWait(pg);
+  const x = txOf(await dumpLocal(pg));
+  const by = {}; x.forEach((t) => { (by[t.card] ||= { n: 0, s: 0 }); by[t.card].n++; by[t.card].s += t.amt; });
+  const ok = Object.entries(g.expect.cards).every(([card, e]) => by[card] && by[card].n === e.n && Math.abs(by[card].s - e.sum) < 0.005);
+  check(ok, 'cada cartão tem a quantidade e a soma do "Total para…" do PDF', { by, e: g.expect.cards });
+  check(!x.some((t) => t.amt === 60428.11 || /Compras|Juros|Saldo de pontos|Associado|Taxa ao/.test(t.desc)), 'nada da barra lateral entrou (nem valores, nem texto), inclusive a que começa a poucos pt da tabela (x=361)');
+  const d = (n) => x.find((t) => t.desc.startsWith(n));
+  check(d('MARKET4U*COMPRA*710786').desc === 'MARKET4U*COMPRA*710786' && d('CHURRASCARIA').desc === 'CHURRASCARIA E LANCHONETE', 'a coluna Cidade não entra na descrição (nem a cidade quebrada em duas linhas)');
+  check(d('D E MATERIAL').desc === 'D E MATERIAL DE CONS 09/10' && d('LOJA AGRO').desc === 'LOJA AGRO TESTE 02/10', 'parcela colada na descrição ("CONS09/10") é separada');
+  check(d('D E MATERIAL').d === '2026-01-30' && d('CLARO').d === '2026-02-09' && d('POSTO').d === '2026-10-19', 'datas sem ano resolvidas pelo ciclo da fatura');
+  const cr = x.find((t) => t.desc.startsWith('AMAZONMKTPLC'));
+  check(cr && cr.amt === -60 && cr.card === 'Ana Paula', 'crédito com o "-" solto depois do valor fica negativo, no cartão certo', cr);
+  check(x.every((t) => t.ym === '2026-10'), 'todos entram em outubro');
+  await c.ctx.close();
+}
+{ // a mesma fatura pelo Excel e pelo PDF: o nome truncado do PDF ("CONS") e o do Excel ("CONSTR") são o mesmo lugar
+  const fe = faturaExpect();
+  const xl = buildExtrato('extrato-parcela.xlsx', [['30/01/2026', 'D E MATERIAL DE CONSTR 8/10', 322.5, 'NICOLAS SANTOS'], ['19/10/2026', 'POSTO TESTE', 150, 'NICOLAS SANTOS']]);
+  const c = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await importFile(pg, xl, '[data-c="date"]'); await pg.locator('#mCard [data-fm="2026-10"]').click(); await goAndWait(pg);
+  await importFile(pg, path.join(OUT, 'fatura-oficial-teste.pdf'), '#mCard'); await pg.locator('#mCard [data-fm="2026-10"]').click();
+  const lbl = await pg.locator('#iGo').innerText(), nota = norm(await pg.locator('#impBody').innerText());
+  check(new RegExp(`Importar ${fe.lines - 1 - 2} lançamentos`).test(lbl) && /2 já importados/.test(nota), 'Excel → PDF: as 2 linhas já importadas (inclusive a parcela com nome truncado) não duplicam', [lbl, nota.match(/\d+ já importados[^.]*/)]);
+  await goAndWait(pg);
+  const all = txOf(await dumpLocal(pg));
+  check(all.length === fe.lines - 1, 'nenhum gasto contado duas vezes', all.length);
+  await c.ctx.close();
+}
+{ // o mesmo conteúdo salvo pelo navegador: data e descrição fundidas num só texto
+  const g = faturaColsHtml();
+  const pdf = await htmlToPdf(browser, g.html, path.join(OUT, 'fatura-navegador-teste.pdf'));
+  const c = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(pg, 'importar'); await pg.setInputFiles('#file', pdf); await pg.waitForSelector('#mCard', { timeout: 40000 });
+  await pickMonth(pg); await goAndWait(pg);
+  const x = txOf(await dumpLocal(pg));
+  const by = {}; x.forEach((t) => { (by[t.card] ||= { n: 0, s: 0 }); by[t.card].n++; by[t.card].s += t.amt; });
+  check(Object.entries(g.expect.cards).every(([card, e]) => by[card] && by[card].n === e.n && Math.abs(by[card].s - e.sum) < 0.005) && !x.some((t) => t.amt === 60428.11), 'PDF salvo pelo navegador (data e descrição fundidas): mesmas contagens e somas, sem a barra lateral', by);
+  await c.ctx.close();
 }
 
 section('10. Sem erros no console');
