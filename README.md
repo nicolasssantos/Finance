@@ -53,6 +53,7 @@ O app está publicado no Netlify, em <https://casa-fazenda-saude-financeira.netl
    - **Ordem:** pode importar a planilha e o extrato em qualquer ordem. O gasto que já existe não é duplicado: o extrato preenche o cartão, e a planilha preenche a classificação que você já fez. O mais prático é importar a planilha primeiro, para o app já conhecer os seus lugares.
 2. **Confirmar**: o que o app não tem certeza aparece aqui. Laranja = sugestão para confirmar, amarelo = lugar novo. Depois de 2 confirmações iguais ele passa a classificar sozinho.
 3. **Resumo** e **Gastos**: para onde o dinheiro está indo, por casa x fazenda, responsável, categoria e mês. Cada gasto mostra de qual cartão saiu (Nicolas, Ana Paula ou Eduardo).
+   - **Regra dos cartões:** todo gasto da fazenda está no cartão **Eduardo**; os cartões **Nicolas** e **Ana Paula** são da casa. Ao classificar um gasto, o app só oferece as operações da fazenda (Leite, Granja, Peixe, Combustível, Outros e os investimentos) para o cartão Eduardo, e só as pessoas da casa para os outros dois. O cartão **Fazenda por operação**, no topo do Resumo (mês e ano), mostra quanto cada operação gastou, com o investimento separado do custeio (parte listrada) e quanto da fazenda ainda está sem operação ("A classificar").
    - No **Resumo**, a chave **Mês | Ano** troca para o **histórico do ano**: escolha o ano (2026 em diante) e veja janeiro a dezembro num gráfico e numa tabela, com total, média mensal e saldo. Toque em um mês para abri-lo.
 4. **Ajustes > Backup**: baixe um backup JSON de vez em quando (restaura tudo, inclusive aprendizado). O Excel é só para consulta.
 
@@ -74,7 +75,7 @@ docs/briefing.md    regras de negócio e histórico
 
 ```bash
 npm install
-npm test              # modo local, Chromium com viewport de celular (61 verificações)
+npm test              # modo local, Chromium com viewport de celular (mais de 200 verificações)
 npm run test:cloud    # contra o emulador do Firebase (precisa de Java; 24 verificações)
 ```
 

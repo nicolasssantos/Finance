@@ -738,6 +738,69 @@ section('9i. Fatura oficial do Bradesco em PDF (colunas, barra lateral, cidade, 
   await c.ctx.close();
 }
 
+section('9j. Fazenda por operação e a regra do cartão (Eduardo = fazenda; Nicolas e Ana Paula = casa)');
+{
+  const rowsF = [
+    ['05/09', 'MEDICAMENTO LEITE', 300, 'Leite', 'Medicamento Leite', 'Cartão Credito', 'Despesa'],
+    ['06/09', 'ORDENHA NOVA', 1200, 'Investimento Leite', 'Manutenção Ordenha Leite', 'Cartão Credito', 'Despesa'],
+    ['07/09', 'RACAO GRANJA', 900, 'Granja', 'Ração Granja', 'Cartão Credito', 'Despesa'],
+    ['08/09', 'POSTO FAZENDA', 250, 'Combustivel', 'Combustível', 'Cartão Credito', 'Despesa'],
+    ['09/09', 'ALEVINOS TESTE', 400, 'Peixe', 'Outros', 'Cartão Credito', 'Despesa'],
+    ['10/09', 'MERCADO CASA', 200, 'Nicolas & Ana Paula', 'Mercado', 'Debito/Pix', 'Despesa'],
+  ];
+  const plF = buildPlanilhaSet('planilha-fazenda.xlsx', rowsF);
+  const exF = buildExtrato('extrato-cartoes.xlsx', [
+    ['05/09/2026', 'FORNECEDOR NOVO TESTE', 150, 'EDUARDO SILVEIRA'], ['06/09/2026', 'OUTRO FORNECEDOR TESTE', 50, 'EDUARDO SILVEIRA'], ['07/09/2026', 'MERCADO NICOLAS TESTE', 80, 'NICOLAS SANTOS']]);
+  const c = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await importFile(pg, plF, '#hYear'); await goAndWait(pg);
+  await importFile(pg, exF, '[data-c="date"]'); await goAndWait(pg);
+  await tab(pg, 'resumo');
+  const faz = () => pg.locator('#fazCard .brow').evaluateAll((rows) => rows.map((r) => [r.dataset.op, r.querySelector('.v').firstChild.textContent.trim().replace(/ /g, ' '), (r.querySelector('.hint') || { textContent: '' }).textContent.replace(/ /g, ' ')]));
+  const want = [['Leite', 'R$ 1.500,00', 'Custeio R$ 300,00 · Investimento R$ 1.200,00'], ['Granja', 'R$ 900,00', ''], ['Peixe', 'R$ 400,00', ''], ['Combustível', 'R$ 250,00', ''], ['A classificar', 'R$ 200,00', '']];
+  const got = await faz();
+  check(JSON.stringify(got) === JSON.stringify(want), 'Resumo (mês): "Fazenda por operação" mostra Leite (custeio + investimento), Granja, Peixe, Combustível e o que ainda está sem operação', got);
+  check(norm(await pg.locator('#fazCard .num').first().innerText()) === 'R$ 3.250,00' && /No cartão: R\$ 200,00/.test(norm(await pg.locator('#fazCard').innerText())), 'total da fazenda (R$ 3.250,00) e quanto dele está no cartão Eduardo (R$ 200,00)');
+  check(await pg.locator('#v-resumo .big').count() === 1, 'o total do mês continua único no topo');
+  check(await noOverflow(pg) && await pg.evaluate(() => { const c = document.querySelector('#fazCard'); return c.scrollWidth <= c.clientWidth && [...c.querySelectorAll('*')].every((e) => e.getBoundingClientRect().right <= innerWidth + 1); }), 'o cartão novo cabe na largura da tela');
+  await pg.evaluate(() => document.querySelector('#fazCard').scrollIntoView({ block: 'start' }));
+  await shot(pg, '24-fazenda-por-operacao');
+  await pg.locator('[data-rv="ano"]').click();
+  check(JSON.stringify(await faz()) === JSON.stringify(want), 'Resumo (ano): a mesma divisão por operação');
+  await pg.locator('[data-rv="mes"]').click();
+
+  // regra do cartão nas telas de edição e de lançamento manual
+  const FARM8 = ['Leite', 'Investimento Leite', 'Granja', 'Investimento Granja', 'Peixe', 'Investimento Peixe', 'Combustivel', 'Outros'];
+  const chips = () => pg.locator('#sChips [data-seg]').allTextContents();
+  await tab(pg, 'gastos');
+  await pg.locator('#gList .tx', { hasText: 'FORNECEDOR NOVO TESTE' }).click();
+  check(JSON.stringify(await chips()) === JSON.stringify(FARM8) && /Cartão Eduardo é da fazenda/.test(await pg.locator('#sheet').innerText()), 'gasto do cartão Eduardo: só as operações da fazenda');
+  await shot(pg, '25-editar-cartao-eduardo');
+  await pg.locator('#eClose').click();
+  await pg.locator('#gList .tx', { hasText: 'MERCADO NICOLAS TESTE' }).click();
+  check(JSON.stringify(await chips()) === JSON.stringify(['Nicolas', 'Ana Paula', 'Nicolas & Ana Paula']) && /Cartão Nicolas é da casa/.test(await pg.locator('#sheet').innerText()), 'gasto do cartão do Nicolas: só as pessoas da casa');
+  await pg.locator('#eClose').click();
+  await pg.locator('#gList .tx', { hasText: 'MERCADO CASA' }).click();
+  check((await chips()).length === 11, 'gasto sem cartão (Pix, planilha): todas as opções');
+  await pg.locator('#cChips [data-card="Eduardo"]').click();
+  check(JSON.stringify(await chips()) === JSON.stringify(FARM8) && await pg.locator('#sChips .chip.on').count() === 0 && await pg.locator('#eSave').isDisabled(), 'passar o gasto para o cartão Eduardo troca as opções para as da fazenda e limpa a pessoa da casa');
+  await pg.locator('#sChips [data-seg="Leite"]').click();
+  await pg.locator('#eCat').selectOption('Medicamento Leite');
+  await pg.locator('#eSave').click();
+  await pg.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+  const moved = txOf(await dumpLocal(pg)).find((x) => x.desc === 'MERCADO CASA');
+  check(moved.card === 'Eduardo' && moved.seg === 'Leite' && moved.grp === 'fazenda', 'o gasto movido para o cartão Eduardo fica como operação da fazenda', moved);
+  await pg.locator('#addBtn').click();
+  await pg.locator('#sheet [data-k="mC"]').click(); await pg.locator('#sheet [data-k="cE"]').click();
+  check(JSON.stringify(await chips()) === JSON.stringify(FARM8), 'lançamento manual no cartão Eduardo: só as operações da fazenda');
+  await pg.locator('#sheet [data-k="cN"]').click();
+  check(JSON.stringify(await chips()) === JSON.stringify(['Nicolas', 'Ana Paula', 'Nicolas & Ana Paula']), 'trocar para o cartão do Nicolas troca as opções para as da casa');
+  await pg.locator('#mClose').click();
+  await tab(pg, 'ajustes');
+  check(/Fazenda \(cartão Eduardo\): Leite · Investimento Leite · Granja/.test(norm(await pg.locator('#v-ajustes').innerText())), 'Ajustes explica a divisão: casa (cartões Nicolas e Ana Paula) e fazenda (cartão Eduardo)');
+  await c.ctx.close();
+}
+
 section('10. Sem erros no console');
 check(errors.length === 0, 'nenhum erro de JavaScript nem de console', errors);
 await ctx.close();

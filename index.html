@@ -83,6 +83,8 @@ button{cursor:pointer}
 .brow .v{font-size:14px;text-align:right}
 .bar{grid-column:1/-1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:0 4px 4px 0;min-width:2px}
+.bar.two{display:flex}
+.bar.two i{border-radius:0;min-width:0}
 .pct{color:var(--muted);font-size:12px;margin-left:6px;font-family:var(--font);font-weight:400}
 .chips{display:flex;gap:8px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px;min-height:34px}
@@ -468,8 +470,29 @@ function splitBlock(casa,faz,tot){
   return h;
 }
 /* responsável, casa por pessoa, categoria e maiores lugares de uma lista de despesas (um mês ou um ano) */
+/* gasto da fazenda por operação (Leite, Granja, Peixe, Combustível, Outros), cada uma com custeio e investimento.
+   Tudo da fazenda está no cartão Eduardo; o gasto de um cartão ainda sem operação aparece em "A classificar". */
+var OPS=['Leite','Granja','Peixe','Combustível','Outros','A classificar'];
+function fazendaCard(cd){
+  var farm=cd.filter(function(t){return t.card==='Eduardo'||grpOfResp(t.seg)==='fazenda'});
+  if(!farm.length)return '';
+  var ops={},tot=sum(farm),edu=sum(cd.filter(function(t){return t.card==='Eduardo'}));
+  OPS.forEach(function(o){ops[o]={c:0,i:0}});
+  farm.forEach(function(t){var o=atvOf(t.seg);if(!ops[o]||o==='Casa')o='A classificar';ops[o][isInv(t.seg)?'i':'c']+=t.amt});
+  var rows=OPS.filter(function(o){return ops[o].c+ops[o].i!==0||o==='Leite'||o==='Granja'||o==='Peixe'});
+  var mx=Math.max.apply(null,rows.map(function(o){return Math.abs(ops[o].c+ops[o].i)}).concat([1]));
+  var h='<div class="card" id="fazCard"><h3>Fazenda por operação</h3><div class="num" style="font-size:26px;line-height:1.1">'+money(tot)+'</div>';
+  h+='<p class="hint" style="margin:4px 0 12px">Todo gasto da fazenda está no cartão Eduardo.'+(edu?' No cartão: '+money(edu)+'.':'')+'</p><div class="rows">';
+  rows.forEach(function(o){
+    var v=ops[o].c+ops[o].i,color='var('+ATVVAR[o]+')';
+    h+='<div class="brow" data-op="'+esc(o)+'"><div class="nm"><span class="dot" style="background:'+color+'"></span><span>'+esc(o)+'</span></div><div class="v num">'+money(v)+'<span class="pct">'+(tot?(v/tot*100).toFixed(0):0)+'%</span></div>';
+    if(ops[o].i)h+='<div class="hint" style="grid-column:1/-1">Custeio '+money(ops[o].c)+' · Investimento '+money(ops[o].i)+'</div>';
+    h+='<div class="bar two"><i style="width:'+Math.max(0,ops[o].c/mx*100)+'%;background:'+color+'"></i><i style="width:'+Math.max(0,ops[o].i/mx*100)+'%;background:repeating-linear-gradient(135deg,'+color+' 0 4px,transparent 4px 7px)"></i></div></div>';
+  });
+  return h+'</div><div class="legend"><span>Listrado = investimento</span></div></div>';
+}
 function breakdownCards(cd,tot){
-  var h='';
+  var h=fazendaCard(cd);
   var rt=totalsBy(cd,function(t){return t.seg||'A classificar'}),keys=Object.keys(rt).sort(function(a,b){return rt[b]-rt[a]}),mx=Math.max.apply(null,keys.map(function(k){return Math.abs(rt[k])}));
   h+='<div class="card"><h3>Por responsável</h3><div class="rows">';
   keys.forEach(function(k){
@@ -670,20 +693,25 @@ function renderGastos(){
 /* ---- folha de edição / lançamento manual ---- */
 function openSheet(html){$('#sheet').innerHTML=html;$('#sheetbg').classList.add('on')}
 function closeSheet(){$('#sheetbg').classList.remove('on');$('#sheet').innerHTML=''}
-function respChips(sel){return '<div class="chips" id="sChips">'+RESP.map(function(s){return '<button type="button" class="chip'+(sel===s?' on':'')+'" data-seg="'+esc(s)+'">'+dot(s)+esc(s)+'</button>'}).join('')+'</div>'}
+/* cartão Eduardo = fazenda (operações); cartões Nicolas e Ana Paula = casa (pessoas); sem cartão (Pix, planilha) = todos */
+function respFor(card){return card==='Eduardo'?FARM:(card==='Nicolas'||card==='Ana Paula')?CASA:RESP}
+function respChips(sel,card){
+  var list=respFor(card);if(sel&&list.indexOf(sel)<0)list=list.concat([sel]);   // um valor antigo continua visível
+  var hint=card==='Eduardo'?'Cartão Eduardo é da fazenda: escolha a operação.':(card==='Nicolas'||card==='Ana Paula')?'Cartão '+card+' é da casa: escolha a pessoa.':'';
+  return (hint?'<div class="hint">'+hint+'</div>':'')+'<div class="chips" id="sChips">'+list.map(function(s){return '<button type="button" class="chip'+(sel===s?' on':'')+'" data-seg="'+esc(s)+'">'+dot(s)+esc(s)+'</button>'}).join('')+'</div>'}
 function cardChips(sel){return '<div><div class="hint" style="margin-bottom:6px">Cartão usado</div><div class="chips" id="cChips">'+CARDS.concat(['']).map(function(c){return '<button type="button" class="chip'+(sel===c?' on':'')+'" data-card="'+esc(c)+'">'+(c?esc(c):'Sem cartão')+'</button>'}).join('')+'</div></div>'}
 function openEdit(id){
   var t=findTx(id);if(!t)return;
   var st={seg:t.seg||'',cat:t.cat||'',card:t.card||'',all:false,sure:false};
   var same=allTx().filter(function(x){return x.id!==t.id&&x.key===t.key&&x.tipo===t.tipo});
   function draw(){
-    openSheet('<h2>'+esc(t.desc)+'</h2><div class="kv"><span class="hint">'+dBR(t)+' · '+ymLabel(t.ym)+(t.met?' · '+esc(t.met):'')+'</span><span class="num">'+money(t.amt)+'</span></div>'+respChips(st.seg)+(isR(t)?'':cardChips(st.card))+
+    openSheet('<h2>'+esc(t.desc)+'</h2><div class="kv"><span class="hint">'+dBR(t)+' · '+ymLabel(t.ym)+(t.met?' · '+esc(t.met):'')+'</span><span class="num">'+money(t.amt)+'</span></div>'+(isR(t)?respChips(st.seg,''):cardChips(st.card)+respChips(st.seg,st.card))+
       (isR(t)?'':'<select id="eCat" aria-label="Categoria">'+catOptions(grpOfResp(st.seg),st.cat)+'</select>')+
       (same.length&&!isR(t)?'<label class="hint" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="eAll" '+(st.all?'checked':'')+' style="width:20px;height:20px"> Aplicar aos outros '+same.length+' deste lugar</label>':'')+
       '<div class="btnrow"><button class="btn" id="eSave" '+(st.seg&&(isR(t)||st.cat)&&!S.readonly?'':'disabled')+'>Salvar</button><button class="btn ghost" id="eClose">Fechar</button></div>'+
       (S.readonly?'':'<button class="btn danger" id="eDel">'+(st.sure?'Confirmar exclusão':'Excluir lançamento')+'</button>'));
     $$('#sChips [data-seg]').forEach(function(b){b.onclick=function(){st.seg=b.dataset.seg;draw()}});
-    $$('#cChips [data-card]').forEach(function(b){b.onclick=function(){st.card=b.dataset.card;draw()}});
+    $$('#cChips [data-card]').forEach(function(b){b.onclick=function(){st.card=b.dataset.card;if(st.seg&&respFor(st.card).indexOf(st.seg)<0)st.seg='';draw()}});
     var ec=$('#eCat');if(ec)ec.onchange=function(e){st.cat=e.target.value;draw()};
     var ea=$('#eAll');if(ea)ea.onchange=function(e){st.all=e.target.checked;draw()};
     $('#eClose').onclick=closeSheet;
@@ -707,8 +735,8 @@ function openManual(){
     var seg2=function(k,l,on){return '<button type="button" class="chip'+(on?' on':'')+'" data-k="'+k+'">'+l+'</button>'};
     var onCard=st.tipo==='D'&&st.met==='Cartão Credito';
     var cardRow=onCard?'<div class="chips">'+seg2('cN','Cartão Nicolas',st.card==='Nicolas')+seg2('cA','Cartão Ana Paula',st.card==='Ana Paula')+seg2('cE','Cartão Eduardo',st.card==='Eduardo')+'</div>':'';
-    openSheet('<h2>Novo lançamento</h2><div class="chips">'+seg2('tD','Despesa',st.tipo==='D')+seg2('tR','Receita',st.tipo==='R')+seg2('mP','Pix / débito',st.met==='Debito/Pix')+seg2('mC','Cartão',st.met==='Cartão Credito')+'</div>'+cardRow+'<div class="grid2"><label class="f">Data<input type="date" id="mD" value="'+keep.d+'"></label><label class="f">Valor (R$)<input type="number" inputmode="decimal" step="0.01" id="mV" value="'+esc(keep.v)+'" placeholder="0,00"></label></div><label class="f">Lugar<input type="text" id="mN" value="'+esc(keep.n)+'" placeholder="Ex.: Pix ração, feira, diarista"></label>'+respChips(st.seg)+(st.tipo==='D'?'<select id="mC" aria-label="Categoria">'+catOptions(grpOfResp(st.seg),st.cat)+'</select>':'')+'<div class="btnrow"><button class="btn" id="mSave">Salvar</button><button class="btn ghost" id="mClose">Cancelar</button></div>');
-    $$('#sheet [data-k]').forEach(function(b){b.onclick=function(){var k=b.dataset.k;if(k==='tD')st.tipo='D';if(k==='tR')st.tipo='R';if(k==='mP')st.met='Debito/Pix';if(k==='mC')st.met='Cartão Credito';if(k==='cN')st.card='Nicolas';if(k==='cA')st.card='Ana Paula';if(k==='cE')st.card='Eduardo';draw()}});
+    openSheet('<h2>Novo lançamento</h2><div class="chips">'+seg2('tD','Despesa',st.tipo==='D')+seg2('tR','Receita',st.tipo==='R')+seg2('mP','Pix / débito',st.met==='Debito/Pix')+seg2('mC','Cartão',st.met==='Cartão Credito')+'</div>'+cardRow+'<div class="grid2"><label class="f">Data<input type="date" id="mD" value="'+keep.d+'"></label><label class="f">Valor (R$)<input type="number" inputmode="decimal" step="0.01" id="mV" value="'+esc(keep.v)+'" placeholder="0,00"></label></div><label class="f">Lugar<input type="text" id="mN" value="'+esc(keep.n)+'" placeholder="Ex.: Pix ração, feira, diarista"></label>'+respChips(st.seg,onCard?st.card:'')+(st.tipo==='D'?'<select id="mC" aria-label="Categoria">'+catOptions(grpOfResp(st.seg),st.cat)+'</select>':'')+'<div class="btnrow"><button class="btn" id="mSave">Salvar</button><button class="btn ghost" id="mClose">Cancelar</button></div>');
+    $$('#sheet [data-k]').forEach(function(b){b.onclick=function(){var k=b.dataset.k;if(k==='tD')st.tipo='D';if(k==='tR')st.tipo='R';if(k==='mP')st.met='Debito/Pix';if(k==='mC')st.met='Cartão Credito';if(k==='cN')st.card='Nicolas';if(k==='cA')st.card='Ana Paula';if(k==='cE')st.card='Eduardo';if(st.tipo==='D'&&st.met==='Cartão Credito'&&st.card&&st.seg&&respFor(st.card).indexOf(st.seg)<0)st.seg='';draw()}});
     $$('#sChips [data-seg]').forEach(function(b){b.onclick=function(){st.seg=b.dataset.seg;draw()}});
     var mc=$('#mC');if(mc)mc.onchange=function(e){st.cat=e.target.value};
     $('#mClose').onclick=closeSheet;
@@ -1223,7 +1251,7 @@ function renderAjustes(){
   hs.forEach(function(k,i){h+='<div class="hrow"><span style="overflow-wrap:anywhere">'+esc(k)+'</span><select data-hs="'+i+'">'+hopt(S.cfg.holders[k])+'</select><button class="x" data-hx="'+i+'" aria-label="Remover">×</button></div>'});
   h+='<div class="hrow"><input type="text" id="nhN" placeholder="Nome no extrato"><select id="nhG">'+hopt('')+'</select><button class="btn ghost" id="nhA" style="min-height:44px;padding:8px 12px">Incluir</button></div></div></div>';
   h+='<div class="card"><h3>Categorias (Despesas)</h3><div class="chips">'+allCats().map(function(c){return '<span class="chip">'+esc(c)+'<button class="x" data-cx="'+esc(c)+'" aria-label="Remover '+esc(c)+'">×</button></span>'}).join('')+'</div><div class="hrow" style="grid-template-columns:1fr auto;margin-top:10px"><input type="text" id="ncN" placeholder="Nova categoria"><button class="btn ghost" id="ncA" style="min-height:44px;padding:8px 12px">Incluir</button></div><p class="hint" style="margin:8px 0 0">Categorias já usadas em lançamentos continuam na lista até serem trocadas.</p></div>';
-  h+='<div class="card"><h3>Responsáveis</h3><p class="hint" style="margin:0">'+RESP.map(esc).join(' · ')+'</p></div>';
+  h+='<div class="card"><h3>Responsáveis</h3><p class="hint" style="margin:0 0 8px"><b>Casa</b> (cartões Nicolas e Ana Paula): '+CASA.map(esc).join(' · ')+'</p><p class="hint" style="margin:0"><b>Fazenda</b> (cartão Eduardo): '+FARM.map(esc).join(' · ')+'</p></div>';
   h+='<div class="card"><h3>Como o app aprende</h3><p class="hint" style="margin:0">Cada confirmação sua ensina o lugar. Depois de duas confirmações iguais, ele classifica sozinho. Se o mesmo lugar já foi para destinos diferentes, pede confirmação de novo. Lugar nunca visto fica em amarelo.</p></div>';
   h+='<div class="card"><h3>Backup</h3><p class="hint" style="margin:0 0 10px">O backup em JSON guarda tudo (lançamentos e ajustes) e pode ser restaurado depois. O Excel serve para consultar fora do app.</p><div class="btnrow"><button class="btn ghost" id="expJ">Baixar backup (JSON)</button><label class="btn ghost" for="rFile" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Restaurar backup</label></div><input type="file" id="rFile" accept=".json,application/json" style="position:absolute;opacity:0;width:1px;height:1px"><button class="btn ghost" id="exp" style="width:100%;margin-top:8px">Exportar tudo para Excel</button></div>';
   h=storageCard()+h;
