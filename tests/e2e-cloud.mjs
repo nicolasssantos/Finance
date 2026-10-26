@@ -93,6 +93,38 @@ check(true, 'confirmar no B faz o selo "Confirmar" sumir no A, sem recarregar');
 const synced = (await listDocs(u1.localId, 'tx_2026')).docs.find((d) => d.fields.desc.stringValue === 'LOJA SEM CATEGORIA');
 check(synced && synced.fields.status.stringValue === 'ok' && synced.fields.cat.stringValue === 'Vestuario', 'confirmação gravada na nuvem');
 
+section('4b. Gasto dividido (rateio) sincroniza entre aparelhos');
+await B.page.locator('.tab[data-t="gastos"]').click();
+await B.page.waitForSelector('#gList .tx');
+const row = B.page.locator('#gList .tx:not(.new):not(.maybe)').first();
+const rowId = await row.getAttribute('data-id');
+const rowAmt = norm(await row.locator('.a').innerText());
+const cents = Math.round(parseFloat(rowAmt.replace(/[^\d,]/g, '').replace(',', '.')) * 100);
+const half = Math.floor(cents / 2);
+await row.click();
+await B.page.locator('#eSplit').click();
+await B.page.locator('[data-pseg="0"]').selectOption('Nicolas'); await B.page.locator('[data-pcat="0"]').selectOption('Outros');
+await B.page.locator('[data-pval="0"]').fill((half / 100).toFixed(2).replace('.', ','));
+await B.page.locator('[data-pseg="1"]').selectOption('Ana Paula'); await B.page.locator('[data-pcat="1"]').selectOption('Investimento');
+check(/Fechou/.test(await B.page.locator('#pSum').innerText()), 'no B: a divisão fecha com o total do lançamento');
+await B.page.locator('#pSave').click();
+await B.page.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+const splitDoc = await (async () => {
+  for (let i = 0; i < 40; i++) {
+    const d = (await listDocs(u1.localId, 'tx_2026')).docs.find((x) => x.name.endsWith('/' + rowId));
+    if (d && d.fields.split) return d;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return null;
+})();
+const vals = splitDoc ? splitDoc.fields.split.arrayValue.values.map((v) => v.mapValue.fields) : [];
+const num = (f) => Math.round(Number(f.doubleValue ?? f.integerValue) * 100);
+check(vals.length === 2 && vals[0].seg.stringValue === 'Nicolas' && vals[1].cat.stringValue === 'Investimento' && vals.reduce((a, f) => a + num(f.amt), 0) === cents, 'a divisão é gravada no Firestore como lista de partes (responsável, categoria e valor) que fecha com o total', vals.length);
+await A.page.locator('.tab[data-t="gastos"]').click();
+for (let i = 0; i < 3 && !/set 2026/i.test(await A.page.locator('#gMnav .m').innerText()); i++) await A.page.locator('#gMnav [data-mv="-1"]').click();
+await A.page.waitForFunction((id) => !!document.querySelector('#gList .tx[data-id^="' + id + '~"]'), rowId, { timeout: 30000 });
+check(await A.page.locator('#gList .tx[data-id^="' + rowId + '~"] .ctag', { hasText: 'Dividido' }).count() === 2, 'o aparelho A recebe o gasto dividido sozinho, como duas partes marcadas "Dividido"');
+
 section('5. Segurança: cada usuário só enxerga a própria área');
 const own = await listDocs(u1.localId, 'tx_2026', u1.idToken);
 const other = await listDocs(u1.localId, 'tx_2026', u2.idToken);

@@ -859,6 +859,169 @@ section('9k. Categorias "Investimento" e "Outros" sempre disponíveis');
   await c.ctx.close();
 }
 
+section('9l. Confirmar: os lançamentos de cada lugar aparecem um por um');
+const exR = buildExtrato('extrato-rateio.xlsx', [
+  ['03/09/2026', 'POSTO EXPO FEIRA', 329.99, 'EDUARDO SILVEIRA'], ['20/09/2026', 'POSTO EXPO FEIRA', 300, 'EDUARDO SILVEIRA'],
+  ['12/09/2026', 'VITORIA RACOES', 800, 'EDUARDO SILVEIRA'], ['26/09/2026', 'VITORIA RACOES', 1200, 'EDUARDO SILVEIRA'],
+  ['02/09/2026', 'LOJA UM SO', 100.01, 'EDUARDO SILVEIRA'],
+  ['01/09/2026', 'CANTINA CINCO', 10, 'NICOLAS SANTOS'], ['05/09/2026', 'CANTINA CINCO', 11, 'NICOLAS SANTOS'], ['08/09/2026', 'CANTINA CINCO', 12, 'NICOLAS SANTOS'], ['10/09/2026', 'CANTINA CINCO', 13, 'NICOLAS SANTOS'], ['15/09/2026', 'CANTINA CINCO', 14, 'NICOLAS SANTOS']]);
+const cR = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const pr = cR.page;
+await pr.goto(url + '/index.html'); await pr.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+await importFile(pr, exR, '[data-c="date"]'); await goAndWait(pr);
+const flat = (s) => norm(s).replace(/\s+/g, ' ');
+const rawNow = async () => txOf(await dumpLocal(pr));
+await tab(pr, 'confirmar');
+const qc = (n) => pr.locator('.qcard', { hasText: n });
+{
+  const rows = await qc('POSTO EXPO FEIRA').locator('.lrow').evaluateAll((rs) => rs.map((r) => r.innerText.replace(/ /g, ' ').replace(/\s+/g, ' ').trim()));
+  check(JSON.stringify(rows) === JSON.stringify(['20/09 POSTO EXPO FEIRA Cartão Eduardo R$ 300,00', '03/09 POSTO EXPO FEIRA Cartão Eduardo R$ 329,99']), 'grupo com 2 lançamentos: cada um em uma linha (data, texto do extrato, cartão e valor), do mais recente ao mais antigo', rows);
+  const sub = flat(await qc('POSTO EXPO FEIRA').locator('.sub').innerText());
+  check(/^2 lançamentos · Cartão Eduardo$/.test(sub) && /R\$ 629,99/.test(flat(await qc('POSTO EXPO FEIRA').locator('.t .num').innerText())), 'o cabeçalho resume (2 lançamentos, cartão) e mostra o total das linhas', sub);
+  check(await qc('LOJA UM SO').locator('.lrow').count() === 0 && /02\/09/.test(await qc('LOJA UM SO').locator('.sub').innerText()), 'lugar com um só lançamento continua simples (sem lista, com a data no cabeçalho)');
+  check(await qc('CANTINA CINCO').locator('.lrow').count() === 4 && /Ver todos os 5 lançamentos/.test(await qc('CANTINA CINCO').locator('[data-more]').innerText()), 'com 5 lançamentos, mostra 4 e oferece "Ver todos os 5"');
+  await qc('CANTINA CINCO').locator('[data-more]').click();
+  check(await qc('CANTINA CINCO').locator('.lrow').count() === 5 && await qc('CANTINA CINCO').locator('[data-more]').count() === 0, '"Ver todos" abre os 5 lançamentos');
+  check(await noOverflow(pr), 'sem rolagem horizontal com a lista de lançamentos');
+  await pr.evaluate(() => document.querySelector('.qcard[data-k$="POSTO EXPO FEIRA"]').scrollIntoView({ block: 'start' }));
+  await shot(pr, '27-confirmar-lancamentos');
+  await qc('POSTO EXPO FEIRA').locator('.lrow').first().click();
+  check(/POSTO EXPO FEIRA/.test(await pr.locator('#sheet h2').innerText()) && /R\$ 300,00/.test(flat(await pr.locator('#sheet .kv').innerText())), 'tocar em uma linha abre só aquele lançamento (R$ 300,00)');
+  await pr.locator('#eClose').click();
+}
+
+section('9m. Dividir um gasto entre mais de uma despesa (rateio)');
+{
+  const fazRows = () => pr.locator('#fazCard .brow').evaluateAll((rs) => Object.fromEntries(rs.map((r) => [r.dataset.op, r.querySelector('.v').firstChild.textContent.replace(/ /g, ' ').trim()])));
+  const before = await rawNow();
+  const totalBefore = Math.round(before.reduce((a, x) => a + x.amt, 0) * 100);
+  // --- VITORIA RACOES: dois lançamentos (800 + 1.200), dividir 1.500 Granja / 500 Leite
+  await qc('VITORIA RACOES').locator('[data-split]').click();
+  check(/Dividir o gasto/.test(await pr.locator('#sheet h2').innerText()) && /R\$ 2\.000,00/.test(flat(await pr.locator('#sheet .kv').innerText())) && await pr.locator('#pSave').isDisabled(), 'abre a divisão com o total (R$ 2.000,00) e "Salvar" desligado até fechar a conta');
+  await shot(pr, '28-dividir-vazio');
+  await pr.locator('[data-pseg="0"]').selectOption('Granja'); await pr.locator('[data-pcat="0"]').selectOption('Ração Granja');
+  await pr.locator('[data-pval="0"]').fill('1500');
+  check(await pr.locator('[data-pval="1"]').inputValue() === '500,00' && /Fechou/.test(await pr.locator('#pSum').innerText()), 'com duas partes, a outra recebe o restante sozinha (500,00) e a soma fecha');
+  check(/75%/.test(await pr.locator('[data-pp="0"]').innerText()) && /25%/.test(await pr.locator('[data-pp="1"]').innerText()), 'mostra a participação de cada parte (75% e 25%)');
+  check(await pr.locator('#pSave').isDisabled(), 'sem responsável e categoria na segunda parte, ainda não salva');
+  await pr.locator('[data-pseg="1"]').selectOption('Leite'); await pr.locator('[data-pcat="1"]').selectOption('Ração');
+  check(!(await pr.locator('#pSave').isDisabled()), 'tudo preenchido e fechando: "Salvar" liga');
+  await shot(pr, '29-dividir-pronto');
+  check(await noOverflow(pr), 'sem rolagem horizontal na divisão');
+  await pr.locator('#pSave').click();
+  await pr.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+  let raw = await rawNow();
+  const vit = raw.filter((x) => x.key === 'VITORIA RACOES').sort((a, b) => a.amt - b.amt);
+  const cts = (arr) => arr.reduce((a, p) => a + Math.round(p.amt * 100), 0);
+  check(vit.length === 2 && vit.every((x) => x.status === 'ok' && x.split.length === 2 && cts(x.split) === Math.round(x.amt * 100)), 'os dois lançamentos ficam divididos e cada um fecha em centavos', vit.map((x) => [x.amt, x.split]));
+  check(JSON.stringify(vit[0].split.map((p) => [p.seg, p.cat, p.amt])) === JSON.stringify([['Granja', 'Ração Granja', 600], ['Leite', 'Ração', 200]]) && JSON.stringify(vit[1].split.map((p) => [p.seg, p.cat, p.amt])) === JSON.stringify([['Granja', 'Ração Granja', 900], ['Leite', 'Ração', 300]]), 'cada lançamento é dividido na mesma proporção (75% / 25%)');
+  check(await qc('VITORIA RACOES').count() === 0, 'sai da fila de Confirmar');
+  check(Math.round((await rawNow()).reduce((a, x) => a + x.amt, 0) * 100) === totalBefore, 'o valor total gravado não muda com a divisão');
+
+  // --- Resumo e Gastos enxergam as partes
+  await tab(pr, 'resumo');
+  const fr = await fazRows();
+  check(fr['Granja'] === 'R$ 1.500,00' && fr['Leite'] === 'R$ 500,00', 'Resumo (Fazenda por operação): Granja R$ 1.500,00 e Leite R$ 500,00', fr);
+  check(Math.round(await pr.evaluate(() => { const m = document.querySelector('#v-resumo .big').innerText.replace(/ /g, ' ').replace(/[^\d,]/g, '').replace(',', '.'); return parseFloat(m) * 100; })) === totalBefore, 'o total do mês no Resumo continua igual ao total dos lançamentos');
+  await tab(pr, 'gastos');
+  check(/set 2026/i.test(await pr.locator('#gMnav .m').innerText()), 'Gastos abre em setembro');
+  const vr = await pr.locator('#gList .tx', { hasText: 'VITORIA RACOES' }).evaluateAll((rs) => rs.map((r) => r.innerText.replace(/ /g, ' ').replace(/\s+/g, ' ').trim()));
+  check(vr.length === 4 && vr.filter((x) => /Granja · Ração Granja/.test(x)).length === 2 && vr.every((x) => /Dividido · total R\$ (800,00|1\.200,00)/.test(x)), 'Gastos mostra uma linha por parte, marcada como "Dividido · total …"', vr);
+  check(/^10 lançamentos/.test(flat(await pr.locator('#gList .kv .hint').first().innerText())), 'o contador de Gastos conta o gasto dividido uma vez (10 lançamentos, não 12)');
+  await pr.locator('[data-f="casa"]').click();
+  check(await pr.locator('#gList .tx', { hasText: 'VITORIA RACOES' }).count() === 0, 'filtro Casa não mostra as partes da fazenda');
+  await pr.locator('[data-f="faz"]').click();
+  check(await pr.locator('#gList .tx', { hasText: 'VITORIA RACOES' }).count() === 4, 'filtro Fazenda mostra as quatro partes');
+  await pr.locator('[data-f="all"]').click();
+  await shot(pr, '30-gastos-dividido');
+
+  // --- reabrir uma parte abre a divisão do lançamento inteiro
+  await pr.locator('#gList .tx', { hasText: 'VITORIA RACOES' }).first().click();
+  check(/Dividir o gasto/.test(await pr.locator('#sheet h2').innerText()) && await pr.locator('[data-pval]').count() === 2 && await pr.locator('#pUndo').count() === 1, 'tocar numa parte reabre a divisão do lançamento (com a opção de voltar a uma despesa só)');
+  await pr.locator('#pClose').click();
+
+  // --- reimportar o mesmo extrato não duplica o gasto dividido
+  const nBefore = (await rawNow()).length;
+  await importFile(pr, exR, '[data-c="date"]');
+  check(/Importar 0 lançamentos/.test(await pr.locator('#iGo').innerText()), 'reimportar o extrato (com lançamentos divididos) gera 0 lançamentos novos');
+  const after = await rawNow();
+  check(after.length === nBefore && after.filter((x) => x.key === 'VITORIA RACOES').length === 2, 'e nada é duplicado no que está gravado', [nBefore, after.length]);
+  check(after.filter((x) => x.key === 'VITORIA RACOES').every((x) => x.split && x.split.length === 2), 'e a divisão continua no lugar');
+
+  // --- backup guarda o lançamento inteiro com as partes (nunca as partes soltas)
+  await tab(pr, 'ajustes');
+  const [dl2] = await Promise.all([pr.waitForEvent('download'), pr.locator('#expJ').click()]);
+  const bf = path.join(OUT, 'backup-rateio.json'); await dl2.saveAs(bf);
+  const bk2 = JSON.parse(fs.readFileSync(bf, 'utf8'));
+  check(bk2.tx.length === after.length && !bk2.tx.some((x) => String(x.id).includes('~')) && bk2.tx.filter((x) => x.split).length === 2, 'backup JSON: mesmos lançamentos, os divididos com suas partes e nenhum id de parte solto', [bk2.tx.length, after.length]);
+  const c3 = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const p3 = c3.page;
+  await p3.goto(url + '/index.html'); await p3.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(p3, 'ajustes'); await p3.setInputFiles('#rFile', bf); await p3.waitForSelector('#rGo'); await p3.locator('#rGo').click();
+  await p3.waitForFunction(() => /restaurados/.test(document.querySelector('#toast').textContent));
+  const rest = txOf(await dumpLocal(p3)).filter((x) => x.key === 'VITORIA RACOES');
+  check(rest.length === 2 && rest.every((x) => x.split && x.split.length === 2), 'restaurar o backup traz os gastos divididos de volta');
+  await c3.ctx.close();
+
+  // --- centavos: R$ 100,01 em três partes (33,34 + 33,34 + 33,33) com o botão "Restante"
+  await tab(pr, 'confirmar');
+  await qc('LOJA UM SO').locator('[data-split]').click();
+  await pr.locator('[data-pseg="0"]').selectOption('Leite'); await pr.locator('[data-pcat="0"]').selectOption('Ração');
+  await pr.locator('[data-pval="0"]').fill('33,34');
+  await pr.locator('#pAdd').click();
+  check(await pr.locator('[data-pval]').count() === 3 && await pr.locator('[data-prm]').count() === 3, 'adicionar outra parte (agora 3, cada uma com opção de remover)');
+  await pr.locator('[data-pseg="1"]').selectOption('Peixe'); await pr.locator('[data-pcat="1"]').selectOption('Outros');
+  await pr.locator('[data-pval="1"]').fill('33,34');
+  check(/Falta distribuir R\$ 33,33/.test(flat(await pr.locator('#pSum').innerText())) && await pr.locator('#pSave').isDisabled(), 'faltando centavos: avisa quanto falta e não deixa salvar');
+  await pr.locator('[data-pseg="2"]').selectOption('Combustivel'); await pr.locator('[data-pcat="2"]').selectOption('Combustível');
+  await pr.locator('[data-prest="2"]').click();
+  check(await pr.locator('[data-pval="2"]').inputValue() === '33,33' && /Fechou/.test(await pr.locator('#pSum').innerText()), '"Restante" completa a última parte (33,33) e fecha a soma');
+  await pr.locator('[data-pval="0"]').fill('40');
+  check(/Passou R\$ 6,66 do total/.test(flat(await pr.locator('#pSum').innerText())) && await pr.locator('#pSave').isDisabled(), 'passando do total: avisa quanto passou e não deixa salvar');
+  await shot(pr, '31-dividir-tres-partes');
+  await pr.locator('[data-pval="0"]').fill('33,34');
+  await pr.locator('#pSave').click();
+  await pr.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+  const loja = (await rawNow()).find((x) => x.key === 'LOJA UM SO');
+  check(JSON.stringify(loja.split.map((p) => p.amt)) === JSON.stringify([33.34, 33.34, 33.33]) && cts(loja.split) === 10001, 'R$ 100,01 em 3 partes fecha exatamente (33,34 + 33,34 + 33,33)', loja.split);
+
+  // --- vários lançamentos com valores que não dividem redondo: cada um fecha em centavos
+  await qc('POSTO EXPO FEIRA').locator('[data-split]').click();
+  await pr.locator('[data-pseg="0"]').selectOption('Combustivel'); await pr.locator('[data-pcat="0"]').selectOption('Combustível');
+  await pr.locator('[data-pval="0"]').fill('400');
+  await pr.locator('[data-pseg="1"]').selectOption('Granja'); await pr.locator('[data-pcat="1"]').selectOption('Combustível');
+  check(await pr.locator('[data-pval="1"]').inputValue() === '229,99', 'R$ 629,99 em 400,00 + 229,99');
+  await pr.locator('#pSave').click();
+  await pr.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+  const posto = (await rawNow()).filter((x) => x.key === 'POSTO EXPO FEIRA');
+  check(posto.length === 2 && posto.every((x) => x.split.length === 2 && cts(x.split) === Math.round(x.amt * 100) && x.split.every((p) => p.amt > 0)), 'cada lançamento do grupo fecha em centavos mesmo com proporção que não é redonda', posto.map((x) => x.split.map((p) => p.amt)));
+  check(Math.round((await rawNow()).reduce((a, x) => a + x.amt, 0) * 100) === totalBefore, 'o valor total gravado segue igual depois de todas as divisões');
+
+  // --- a próxima compra do mesmo lugar lembra a divisão da última vez
+  const exN = buildExtrato('extrato-rateio-out.xlsx', [['10/10/2026', 'VITORIA RACOES', 1000, 'EDUARDO SILVEIRA']]);
+  await importFile(pr, exN, '[data-c="date"]'); await goAndWait(pr);
+  await tab(pr, 'confirmar');
+  check(/Da última vez foi dividido: Granja 75% · Leite 25%/.test(flat(await qc('VITORIA RACOES').innerText())) && /Dividir como da última vez/.test(await qc('VITORIA RACOES').locator('[data-split]').innerText()), 'compra nova do mesmo lugar: mostra como foi dividido da última vez');
+  check(await qc('VITORIA RACOES').locator('.pill').innerText() !== '' && await qc('VITORIA RACOES').locator('[data-ok]').count() === 1, 'e não classifica sozinho: continua pedindo confirmação');
+  await qc('VITORIA RACOES').locator('[data-split]').click();
+  const pre = await pr.evaluate(() => [...document.querySelectorAll('[data-pval]')].map((e) => e.value));
+  check(JSON.stringify(pre) === JSON.stringify(['750,00', '250,00']) && !(await pr.locator('#pSave').isDisabled()), 'a divisão abre já preenchida na mesma proporção (750,00 + 250,00) e pronta para salvar', pre);
+  await pr.locator('#pSave').click();
+  await pr.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+  const nov = (await rawNow()).find((x) => x.key === 'VITORIA RACOES' && x.ym === '2026-10');
+  check(nov && nov.status === 'ok' && JSON.stringify(nov.split.map((p) => [p.seg, p.amt])) === JSON.stringify([['Granja', 750], ['Leite', 250]]), 'a compra de outubro fica dividida 750 / 250', nov);
+
+  // --- voltar a uma despesa só
+  await tab(pr, 'gastos');
+  for (let i = 0; i < 1; i++) await pr.locator('#gMnav [data-mv="-1"]').click();
+  await pr.locator('#gList .tx', { hasText: 'LOJA UM SO' }).first().click();
+  await pr.locator('#pUndo').click();
+  check(await pr.locator('#eSave').count() === 1 && await pr.locator('#sChips [data-seg].on').count() === 1, '"Voltar a uma despesa só" abre a edição normal com o responsável principal marcado');
+  await pr.locator('#eSave').click();
+  await pr.waitForFunction(() => !document.querySelector('#sheetbg').classList.contains('on'));
+  const loja2 = (await rawNow()).find((x) => x.key === 'LOJA UM SO');
+  check(!loja2.split && loja2.status === 'ok' && loja2.seg === 'Leite' && loja2.amt === 100.01, 'depois de salvar, o lançamento volta a ter uma despesa só (sem divisão)', loja2);
+}
+await cR.ctx.close();
+
 section('10. Sem erros no console');
 check(errors.length === 0, 'nenhum erro de JavaScript nem de console', errors);
 await ctx.close();
