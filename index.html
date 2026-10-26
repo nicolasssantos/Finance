@@ -635,7 +635,7 @@ function renderConfirmar(){
   gl.slice(0,lim).forEach(function(g){
     var d=S.draft[g.k];
     if(!d){var f=g.items[0],sg=(!f.seg||!f.cat)?suggestFor(f):null;d={seg:f.seg||(sg&&sg.seg)||'',cat:f.cat||(sg&&sg.cat)||''};S.draft[g.k]=d}
-    var segs=g.grp==='casa'?CASA:g.grp==='fazenda'?FARM:RESP;
+    var segs=RESP;   // todas as opções sempre disponíveis, qualquer que seja o cartão
     var ok=d.seg&&d.cat;
     var withDate=g.items.filter(function(t){return !t.nd})[0]||g.items[0];
     var cs=[];g.items.forEach(function(t){if(t.card&&cs.indexOf(t.card)<0)cs.push(t.card)});
