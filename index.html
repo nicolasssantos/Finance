@@ -334,11 +334,12 @@ function topCats(grp){
   ((grp&&DEF_TOP[grp])||[]).forEach(function(c){if(top.length<10&&top.indexOf(c)<0)top.push(c)});
   return top;
 }
-function allCats(){var s={Outros:1};S.cfg.cats.forEach(function(c){s[c]=1});allTx().forEach(function(t){if(t.cat)s[t.cat]=1});return Object.keys(s).sort(function(a,b){return a.localeCompare(b,'pt-BR')})}
+var FIXED_CATS=['Investimento','Outros'];   // sempre disponíveis, mesmo que a configuração salva não as tenha
+function allCats(){var s={};FIXED_CATS.forEach(function(c){s[c]=1});S.cfg.cats.forEach(function(c){s[c]=1});allTx().forEach(function(t){if(t.cat)s[t.cat]=1});return Object.keys(s).sort(function(a,b){return a.localeCompare(b,'pt-BR')})}
 function catOptions(grp,cur){
   var all=allCats();if(cur&&all.indexOf(cur)<0)all.push(cur);
   var op=function(c){return '<option'+(cur===c?' selected':'')+'>'+esc(c)+'</option>'};
-  var top=topCats(grp);if(top.indexOf('Outros')<0)top.push('Outros');   // "Outros" sempre à mão, no fim das mais usadas
+  var top=topCats(grp);FIXED_CATS.forEach(function(c){if(top.indexOf(c)<0)top.push(c)});   // sempre à mão, no fim das mais usadas
   return '<option value="">Categoria…</option><optgroup label="Mais usadas">'+top.map(op).join('')+'</optgroup><optgroup label="Todas">'+all.map(op).join('')+'</optgroup>';
 }
 
@@ -1251,7 +1252,7 @@ function renderAjustes(){
   var h='<div class="card"><h3>Titulares dos cartões</h3><p class="hint" style="margin:0 0 10px">O nome do titular no extrato define o destino. Cartão da Fazenda pede o responsável (Leite, Granja, Peixe…); os outros entram já com a pessoa.</p><div class="rows">';
   hs.forEach(function(k,i){h+='<div class="hrow"><span style="overflow-wrap:anywhere">'+esc(k)+'</span><select data-hs="'+i+'">'+hopt(S.cfg.holders[k])+'</select><button class="x" data-hx="'+i+'" aria-label="Remover">×</button></div>'});
   h+='<div class="hrow"><input type="text" id="nhN" placeholder="Nome no extrato"><select id="nhG">'+hopt('')+'</select><button class="btn ghost" id="nhA" style="min-height:44px;padding:8px 12px">Incluir</button></div></div></div>';
-  h+='<div class="card"><h3>Categorias (Despesas)</h3><div class="chips">'+allCats().map(function(c){return '<span class="chip">'+esc(c)+(c==='Outros'?'':'<button class="x" data-cx="'+esc(c)+'" aria-label="Remover '+esc(c)+'">×</button>')+'</span>'}).join('')+'</div><div class="hrow" style="grid-template-columns:1fr auto;margin-top:10px"><input type="text" id="ncN" placeholder="Nova categoria"><button class="btn ghost" id="ncA" style="min-height:44px;padding:8px 12px">Incluir</button></div><p class="hint" style="margin:8px 0 0">Categorias já usadas em lançamentos continuam na lista até serem trocadas.</p></div>';
+  h+='<div class="card"><h3>Categorias (Despesas)</h3><div class="chips">'+allCats().map(function(c){return '<span class="chip">'+esc(c)+(FIXED_CATS.indexOf(c)>=0?'':'<button class="x" data-cx="'+esc(c)+'" aria-label="Remover '+esc(c)+'">×</button>')+'</span>'}).join('')+'</div><div class="hrow" style="grid-template-columns:1fr auto;margin-top:10px"><input type="text" id="ncN" placeholder="Nova categoria"><button class="btn ghost" id="ncA" style="min-height:44px;padding:8px 12px">Incluir</button></div><p class="hint" style="margin:8px 0 0">Categorias já usadas em lançamentos continuam na lista até serem trocadas.</p></div>';
   h+='<div class="card"><h3>Responsáveis</h3><p class="hint" style="margin:0 0 8px"><b>Casa</b> (cartões Nicolas e Ana Paula): '+CASA.map(esc).join(' · ')+'</p><p class="hint" style="margin:0"><b>Fazenda</b> (cartão Eduardo): '+FARM.map(esc).join(' · ')+'</p></div>';
   h+='<div class="card"><h3>Como o app aprende</h3><p class="hint" style="margin:0">Cada confirmação sua ensina o lugar. Depois de duas confirmações iguais, ele classifica sozinho. Se o mesmo lugar já foi para destinos diferentes, pede confirmação de novo. Lugar nunca visto fica em amarelo.</p></div>';
   h+='<div class="card"><h3>Backup</h3><p class="hint" style="margin:0 0 10px">O backup em JSON guarda tudo (lançamentos e ajustes) e pode ser restaurado depois. O Excel serve para consultar fora do app.</p><div class="btnrow"><button class="btn ghost" id="expJ">Baixar backup (JSON)</button><label class="btn ghost" for="rFile" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Restaurar backup</label></div><input type="file" id="rFile" accept=".json,application/json" style="position:absolute;opacity:0;width:1px;height:1px"><button class="btn ghost" id="exp" style="width:100%;margin-top:8px">Exportar tudo para Excel</button></div>';
