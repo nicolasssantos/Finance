@@ -809,6 +809,48 @@ section('9j. Fazenda por operação e a regra do cartão (Eduardo = fazenda; Nic
   await c.ctx.close();
 }
 
+section('9k. Categoria "Outros" sempre disponível');
+{
+  // backup cuja lista de categorias não tem "Outros" (ex.: configuração antiga na nuvem)
+  const bk = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
+  bk.cfg.cats = ['Mercado', 'Padaria'];
+  bk.tx.forEach((x) => { if (x.cat === 'Outros') x.cat = 'Mercado'; });
+  const semOutros = path.join(OUT, 'backup-sem-outros.json');
+  fs.writeFileSync(semOutros, JSON.stringify(bk));
+  const c = await newPage('light', {}, new Date('2026-10-22T15:00:00Z')); const pg = c.page;
+  await pg.goto(url + '/index.html'); await pg.waitForFunction(() => /Nenhum lançamento/.test(document.querySelector('#v-resumo').innerText));
+  await tab(pg, 'ajustes');
+  await pg.setInputFiles('#rFile', semOutros);
+  await pg.waitForSelector('#rGo'); await pg.locator('#rGo').click();
+  await pg.waitForFunction(() => /restaurados/.test(document.querySelector('#toast').textContent));
+  const dump = txOf(await dumpLocal(pg));
+  check(dump.length > 0 && !dump.some((x) => x.cat === 'Outros'), 'ponto de partida: nenhum lançamento usa "Outros" e a lista de categorias do backup não a tem');
+  const quick = (sel) => pg.evaluate((s) => { const g = [...document.querySelectorAll(s + ' optgroup')]; return g.map((o) => [o.label, [...o.querySelectorAll('option')].map((x) => x.textContent)]); }, sel);
+  await tab(pg, 'ajustes');
+  check(await pg.locator('#v-ajustes .chip', { hasText: /^Outros$/ }).count() === 1 && await pg.locator('[data-cx="Outros"]').count() === 0 && await pg.locator('[data-cx="Mercado"]').count() === 1, 'Ajustes lista "Outros" sem botão de remover; as demais categorias continuam removíveis');
+  await tab(pg, 'confirmar');
+  const cf = await pg.evaluate(() => { const g = [...document.querySelector('#v-confirmar select[data-cat]').querySelectorAll('optgroup')]; return g.map((o) => [o.label, [...o.querySelectorAll('option')].map((x) => x.textContent)]); });
+  check(cf[0][0] === 'Mais usadas' && cf[0][1][cf[0][1].length - 1] === 'Outros' && cf[1][1].includes('Outros'), 'Confirmar: "Outros" no fim das mais usadas e na lista completa', cf.map((g) => [g[0], g[1].length]));
+  await pg.locator('#v-confirmar .qcard').first().locator('select[data-cat]').selectOption('Outros');
+  check(await pg.locator('#v-confirmar .qcard').first().locator('select[data-cat]').inputValue() === 'Outros', 'dá para escolher "Outros" na categoria do Confirmar');
+  await shot(pg, '26-confirmar-categoria-outros');
+  await tab(pg, 'gastos');
+  await pg.locator('#addBtn').click();
+  const mq = await quick('#mC');
+  check(mq[0][1][mq[0][1].length - 1] === 'Outros' && mq[1][1].includes('Outros'), 'lançamento manual: "Outros" nas mais usadas e na lista completa');
+  await pg.fill('#mV', '12.30'); await pg.fill('#mN', 'Gasto diverso');
+  await pg.locator('#sheet [data-seg="Nicolas"]').click();
+  await pg.locator('#mC').selectOption('Outros');
+  await pg.locator('#mSave').click();
+  await pg.waitForFunction(() => /Lançamento salvo/.test(document.querySelector('#toast').textContent));
+  const sv = txOf(await dumpLocal(pg)).find((x) => x.desc === 'Gasto diverso');
+  check(sv && sv.cat === 'Outros' && sv.seg === 'Nicolas' && sv.amt === 12.3, 'lançamento gravado na categoria "Outros"', sv);
+  await pg.locator('#gList .tx', { hasText: 'Gasto diverso' }).click();
+  const eq = await quick('#eCat');
+  check(eq[0][1].includes('Outros') && eq[1][1].includes('Outros') && await pg.locator('#eCat').inputValue() === 'Outros', 'folha de edição: "Outros" disponível e já marcada neste gasto', [eq[0][1], await pg.locator('#eCat').inputValue()]);
+  await c.ctx.close();
+}
+
 section('10. Sem erros no console');
 check(errors.length === 0, 'nenhum erro de JavaScript nem de console', errors);
 await ctx.close();
